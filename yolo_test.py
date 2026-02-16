@@ -3,6 +3,9 @@ from pathlib import Path
 import cv2
 from ultralytics import YOLO
 
+#use pip install opencv-python numpy ultralytics
+#change location of images in script
+#then run python yolo_test.py
 
 images_dir = Path(r"C:\Users\gauta\OneDrive\Documents\MATLAB\Pretrained-YOLOv8-Network-For-Object-Detection-main\images")
 
@@ -117,3 +120,4 @@ print(f"Avg per image: {avg*1000:.1f} ms")
 print(f"Avg FPS equiv: {1/avg:.2f}")
 print(f"Min/Max: {min(times)*1000:.1f} / {max(times)*1000:.1f} ms")
 print(f"Outputs in: {out_dir.resolve()}")
+
