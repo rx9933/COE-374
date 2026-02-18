@@ -46,9 +46,8 @@ export async function fetchThrowEvent(): Promise<ThrowEvent> {
   const throwType = randomThrowType();
   const { circleDiameter, fieldLength } =
     circleFieldDimsForThrowType(throwType);
-  const maxDistance = fieldLength;
-  const randDistance =
-    Math.random() * (maxDistance - circleDiameter / 2.0) + circleDiameter / 2.0;
+  const randDistanceBase = Math.random() * fieldLength;
+  const randDistance = circleDiameter / 2.0 + randDistanceBase;
   const maxTheta = throwType === ThrowType.JAVELIN ? 28.96 : 34.92;
   const normTheta = maxTheta / 2.0;
   const randPosTheta = Math.random() * normTheta;
