@@ -23,6 +23,19 @@ export enum ThrowType {
   SHOTPUT = "shotput",
 }
 
+export function displayNameForThrowType(throwType: ThrowType) {
+  switch (throwType) {
+    case ThrowType.DISCUS:
+      return "Discus";
+    case ThrowType.HAMMER:
+      return "Hammer";
+    case ThrowType.JAVELIN:
+      return "Javelin";
+    case ThrowType.SHOTPUT:
+      return "Shot Put";
+  }
+}
+
 export function circleFieldDimsForThrowType(throwType: ThrowType) {
   switch (throwType) {
     case ThrowType.DISCUS:

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { displayNameForInfraction, ThrowEvent, throwEventSchema, ThrowType } from "@/lib/schemas";
+import { displayNameForInfraction, displayNameForThrowType, ThrowEvent, throwEventSchema, ThrowType } from "@/lib/schemas";
 import { fetchThrowEvent } from "@/lib/api";
 import { ImageGallery } from "@/app/components/image-gallery";
 import { CircleField } from "./components/circle-field";
@@ -46,8 +46,14 @@ export default function Page() {
         {status === "waiting" ? "Waiting for throw..." : "Throw received!"}
       </h1>
 
+      {currentThrow && currentThrow.infractions.length === 0 && (
+        <h2 className="text-2xl font-bold mb-4 text-center">
+          Distance: {currentThrow.distance.toFixed(2)}m
+        </h2>
+      )}
+
       <h3 className="text-xl font-semibold mb-2 text-center">
-        {currentThrow ? `Throw type: ${currentThrow.throwType.toUpperCase()}` : "No throw data yet"}
+        {currentThrow ? `Throw type: ${displayNameForThrowType(currentThrow.throwType)}` : "No throw data yet"}
       </h3>
 
       {/* Error */}
