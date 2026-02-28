@@ -192,11 +192,13 @@ if __name__ == "__main__":
     for i in range(n_cameras):
         P = K_list[i] @ np.hstack([R_list[i], t_list[i].reshape(3, 1)])
         local_gcps.append([project_point(P, absolute_gcps[j]) + np.random.randn(2) * 1.0 for j in range(len(absolute_gcps))])
-
+    time_start = time.time()
     X_opt, rvecs_opt, tvecs_opt, cov, result = optimize_trajectory(
         K_list, pixels, local_gcps, absolute_gcps, dt=dt, g=g, drag=0.0,
         rvecs_init=rvecs_init, tvecs_init=tvecs_init, pixel_sigma=1.0
     )
+    time_end = time.time()
+    print("Time taken: {:.4f} s".format(time_end - time_start))
     print("Trajectory shape: {} timesteps x 3".format(n_timesteps))
     print("Optimized (first 3, last 2):\n", np.vstack([X_opt[:3], X_opt[-2:]]))
     print("True (first 3, last 2):\n", np.vstack([traj_true[:3], traj_true[-2:]]))
@@ -204,9 +206,9 @@ if __name__ == "__main__":
     print("Optimized camera rotations (rvecs):\n", rvecs_opt)
     print("Optimized camera translations:\n", tvecs_opt)
     print("Covariance (trajectory positions, 3x3 per timestep on diagonal):")
-    for t in range(n_timesteps):
-        cov_t = cov[3 * t:3 * t + 3, 3 * t:3 * t + 3]
-        print("  t={}: std (x,y,z) ~ {}".format(t, np.sqrt(np.diag(cov_t))))
+    #for t in range(n_timesteps):
+    #    cov_t = cov[3 * t:3 * t + 3, 3 * t:3 * t + 3]
+    #    print("  t={}: std (x,y,z) ~ {}".format(t, np.sqrt(np.diag(cov_t))))
 
     # Plot: true vs optimized trajectory and uncertainty ellipsoids
     try:
