@@ -1,26 +1,14 @@
 """
-Method 3 (Physics-Informed Triangulation):
-Assume camera poses may be inaccurate and jointly optimize both the 3D object position and the camera parameters 
-using pixel observations and precise GCP measurements. 
-The GCPs anchor the solution in absolute space while bundle adjustment refines everything simultaneously.
-The physics constraint is that the object is moving in a parabolic trajectory.
+Method 4 (Physics-Informed Triangulation without Camera Conditioning):
+Assume camera poses are known exactly and only optimize the 3D trajectory.
+NO GCPs are used -- with the camera intrinsics/extrinsics are fixed and not optimized.
+The physics constraint is that the object follows a parabolic trajectory.
 """
 
 import numpy as np
 from scipy.optimize import least_squares
 import time
 
-
-def rodrigues_to_matrix(rvec):
-    theta = np.linalg.norm(rvec)
-    if theta < 1e-8:
-        print("Small rotation, using identity matrix")  
-        return np.eye(3)
-    else:
-        k = rvec / theta
-        K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]]) #rotation matrix
-        R = np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * (K @ K) #Rodrigues formula
-        return R
 
 def project_point(P, X):
     X_h = np.hstack([X, 1.0])
@@ -44,93 +32,55 @@ def dlt_triangulation(P_list, pixels):
     return X
 
 
-def bundle_residual(params, K_list, pixels, local_gcps, absolute_gcps, n_cameras, n_timesteps, omega_gcp=1.0, omega_phys=1.0, dt=1.0, g=None, drag=0.0):
-    X_vars = params[:3 * n_timesteps].reshape((n_timesteps, 3))
-    rvecs = params[3 * n_timesteps:3 * n_timesteps + 3 * n_cameras].reshape((n_cameras, 3))
-    tvecs = params[3 * n_timesteps + 3 * n_cameras:].reshape((n_cameras, 3))
-
+def trajectory_residual(params, P_list, pixels, n_timesteps, omega_phys=1.0, dt=1.0, g=None, drag=0.0, pixel_sigma=1.0, physics_sigma=0.01):
+    X_vars = params.reshape((n_timesteps, 3))
     residuals = []
-    P_list = [K_list[i] @ np.hstack([rodrigues_to_matrix(rvecs[i]), tvecs[i].reshape(3, 1)]) for i in range(n_cameras)]
 
     for t in range(n_timesteps):
         X_t = X_vars[t]
-        for i in range(n_cameras):
+        for i in range(len(P_list)):
             pred = project_point(P_list[i], X_t)
-            r = pred - pixels[i][t]
+            r = (pred - pixels[i][t]) / pixel_sigma
             residuals.append(r)
-
-    if absolute_gcps is not None and len(absolute_gcps) > 0:
-        for i in range(n_cameras):
-            for j, G in enumerate(absolute_gcps):
-                if local_gcps[i][j] is not None:
-                    pred = project_point(P_list[i], G)
-                    r = omega_gcp * (pred - local_gcps[i][j])
-                    residuals.append(r)
 
     for t in range(1, n_timesteps - 1):
         X_prev = X_vars[t - 1]
         X_curr = X_vars[t]
         X_next = X_vars[t + 1]
-        phys_res = X_next - 2 * X_curr + X_prev - g * dt**2 - drag * dt**2
+        phys_res = (X_next - 2 * X_curr + X_prev - g * dt**2 - drag * dt**2) / physics_sigma
         residuals.append(omega_phys * phys_res)
 
     return np.concatenate(residuals)
 
 
-def optimize_trajectory(K_list, pixels, local_gcps=None, absolute_gcps=None, dt=1.0, g=None, drag=0.0, rvecs_init=None, tvecs_init=None, pixel_sigma=1.0):
+def optimize_trajectory(P_list, pixels, dt=1.0, g=None, drag=0.0, pixel_sigma=1.0, physics_sigma=0.01, omega_phys=1.0):
     if g is None:
         g = np.array([0, -9.81, 0])
-    n_cameras = len(K_list)
+    n_cameras = len(P_list)
     n_timesteps = len(pixels[0])
-    if local_gcps is None:
-        local_gcps = []
-    if absolute_gcps is None:
-        absolute_gcps = []
-    m_gcps = len(absolute_gcps)
-    if m_gcps > 0 and (len(local_gcps) == 0 or len(local_gcps[0]) != m_gcps):
-        local_gcps = [[None] * m_gcps for _ in range(n_cameras)]
-
-    if rvecs_init is None:
-        rvecs_init = np.zeros((n_cameras, 3))
-    if tvecs_init is None:
-        tvecs_init = np.zeros((n_cameras, 3))
 
     X_init = []
     for t in range(n_timesteps):
-        P_list_tmp = [K_list[i] @ np.hstack([rodrigues_to_matrix(rvecs_init[i]), tvecs_init[i].reshape(3, 1)]) for i in range(n_cameras)]
         pixel_t = [pixels[i][t] for i in range(n_cameras)]
-        X_init.append(dlt_triangulation(P_list_tmp, pixel_t))
-    X_init = np.array(X_init).flatten()
+        X_init.append(dlt_triangulation(P_list, pixel_t))
+    params_init = np.array(X_init).flatten()
 
-    params_init = np.concatenate([X_init, rvecs_init.ravel(), tvecs_init.ravel()])
+    result = least_squares(trajectory_residual, params_init, args=(P_list, pixels, n_timesteps, omega_phys, dt, g, drag, pixel_sigma, physics_sigma), method="lm")
 
-    result = least_squares(bundle_residual, params_init, args=(K_list, pixels, local_gcps, absolute_gcps, n_cameras, n_timesteps, 1.0, 1.0, dt, g, drag), method="lm")
-
-    X_opt = result.x[:3 * n_timesteps].reshape((n_timesteps, 3))
-    rvecs_opt = result.x[3 * n_timesteps:3 * n_timesteps + 3 * n_cameras].reshape((n_cameras, 3))
-    tvecs_opt = result.x[3 * n_timesteps + 3 * n_cameras:].reshape((n_cameras, 3))
-
+    X_opt = result.x.reshape((n_timesteps, 3))
     J = result.jac
     JTJ = J.T @ J
     try:
-        cov_full = pixel_sigma**2 * np.linalg.inv(JTJ)
-        cov = cov_full[:3 * n_timesteps, :3 * n_timesteps]
+        cov = np.linalg.inv(JTJ)
     except np.linalg.LinAlgError:
         cov = np.full((3 * n_timesteps, 3 * n_timesteps), np.nan)
 
-    return X_opt, rvecs_opt, tvecs_opt, cov, result
+    return X_opt, cov, result
 
 
 #==============================================
 # Example usage
 #==============================================
-
-def _matrix_to_rodrigues(R):
-    theta = np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1))
-    if theta < 1e-8:
-        return np.zeros(3)
-    return (theta / (2 * np.sin(theta))) * np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]])
-
 
 def _camera_look_at(cam_position, target, up=np.array([0, 0, 1])):
     z = (target - cam_position) / (np.linalg.norm(target - cam_position) + 1e-10)
@@ -145,8 +95,8 @@ def _camera_look_at(cam_position, target, up=np.array([0, 0, 1])):
 
 
 if __name__ == "__main__":
-    print("Starting Physics-Informed Triangulation")
-    np.random.seed(42)
+    print("Starting Physics-Informed Triangulation (no GCPs, fixed cameras)")
+    np.random.seed(43)
     n_cameras = 3
     n_timesteps = 25
     dt = 0.04
@@ -154,7 +104,6 @@ if __name__ == "__main__":
     drag_coef = 0.2
 
     K_list = [np.array([[800, 0, 320], [0, 800, 240], [0, 0, 1]]) for _ in range(n_cameras)]
-
     center = np.array([0.0, 0.0, 0.0])
     radius, height = 4.0, 2.0
     angles = np.array([0, 2 * np.pi / 3, 4 * np.pi / 3])
@@ -165,11 +114,11 @@ if __name__ == "__main__":
         R, t = _camera_look_at(cam_positions[i], center)
         R_list.append(R)
         t_list.append(t)
-    rvecs_init = np.array([_matrix_to_rodrigues(R) for R in R_list])
-    tvecs_init = np.array(t_list)
+
+    P_list = [K_list[i] @ np.hstack([R_list[i], t_list[i].reshape(3, 1)]) for i in range(n_cameras)]
 
     X0 = np.array([0.0, 0.0, 1.5])
-    V0 = np.array([1.0, 0.0, 2.5])
+    V0 = np.array([1.0, 1.0, 2.5])
     traj_true = []
     x, v = X0.copy(), V0.copy()
     for t in range(n_timesteps):
@@ -184,18 +133,12 @@ if __name__ == "__main__":
 
     pixels = []
     for i in range(n_cameras):
-        P = K_list[i] @ np.hstack([R_list[i], t_list[i].reshape(3, 1)])
-        pixels.append([project_point(P, traj_true[t]) + np.random.randn(2) * 1.0 for t in range(n_timesteps)])
+        pixels.append([project_point(P_list[i], traj_true[t]) + np.random.randn(2) * 2.0 for t in range(n_timesteps)])
 
-    absolute_gcps = [np.array([-0.3, 0.2, 0.0]), np.array([0.3, -0.2, 0.0])]
-    local_gcps = []
-    for i in range(n_cameras):
-        P = K_list[i] @ np.hstack([R_list[i], t_list[i].reshape(3, 1)])
-        local_gcps.append([project_point(P, absolute_gcps[j]) + np.random.randn(2) * 1.0 for j in range(len(absolute_gcps))])
     time_start = time.time()
-    X_opt, rvecs_opt, tvecs_opt, cov, result = optimize_trajectory(
-        K_list, pixels, local_gcps, absolute_gcps, dt=dt, g=g, drag=0.0,
-        rvecs_init=rvecs_init, tvecs_init=tvecs_init, pixel_sigma=1.0
+    X_opt, cov, result = optimize_trajectory(
+        P_list, pixels, dt=dt, g=g, drag=0.0,
+        pixel_sigma=1.0, physics_sigma=1.0, omega_phys=1.0
     )
     time_end = time.time()
     print("Time taken: {:.4f} s".format(time_end - time_start))
@@ -203,12 +146,6 @@ if __name__ == "__main__":
     print("Optimized (first 3, last 2):\n", np.vstack([X_opt[:3], X_opt[-2:]]))
     print("True (first 3, last 2):\n", np.vstack([traj_true[:3], traj_true[-2:]]))
     print("Mean position error (m):", np.mean(np.linalg.norm(X_opt - traj_true, axis=1)))
-    print("Optimized camera rotations (rvecs):\n", rvecs_opt)
-    print("Optimized camera translations:\n", tvecs_opt)
-    print("Covariance (trajectory positions, 3x3 per timestep on diagonal):")
-    #for t in range(n_timesteps):
-    #    cov_t = cov[3 * t:3 * t + 3, 3 * t:3 * t + 3]
-    #    print("  t={}: std (x,y,z) ~ {}".format(t, np.sqrt(np.diag(cov_t))))
 
     # Plot: true vs optimized trajectory and uncertainty ellipsoids
     try:
@@ -284,7 +221,8 @@ if __name__ == "__main__":
         ax3.set_aspect("equal"); ax3.grid(True)
 
         plt.tight_layout()
-        plt.savefig("MathScripts/trajectory_and_uncertainty.png", dpi=120)
+        plt.savefig("trajectory_and_uncertainty.png", dpi=120)
         plt.show()
     except ImportError:
         print("Install matplotlib to plot trajectory and covariances.")
+
