@@ -1,42 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { displayNameForInfraction, displayNameForThrowType, ThrowEvent, throwEventSchema, ThrowType } from "@/lib/schemas";
 import { fetchThrowEvent } from "@/lib/api";
 import { ImageGallery } from "@/app/components/image-gallery";
 import { CircleField } from "./components/circle-field";
 import { JavelinField } from "./components/javelin-field";
 
+const THROW_TYPE_OPTIONS = [
+  ThrowType.DISCUS,
+  ThrowType.HAMMER,
+  ThrowType.JAVELIN,
+  ThrowType.SHOTPUT,
+];
+
+const spinKeyframes = `@keyframes spin { to { transform: rotate(360deg); } }`;
+
 export default function Page() {
   const [currentThrow, setCurrentThrow] = useState<ThrowEvent | null>(null);
   const [status, setStatus] = useState<"waiting" | "received">("waiting");
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function poll() {
-      try {
-        const data = throwEventSchema.parse(await fetchThrowEvent());
-
-        if (!cancelled) {
-          setCurrentThrow(data);
-          setStatus("received");
-        }
-      } catch (err: unknown) {
-        console.error(err);
-        if (!cancelled) setError("Failed to fetch/validate throw");
-      } finally {
-        if (!cancelled) setTimeout(poll, 1000);
-      }
-    }
-
-    poll();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const [selectedThrowType, setSelectedThrowType] = useState<ThrowType>(ThrowType.SHOTPUT);
+  const [isLoadingCurrentThrow, setIsLoadingCurrentThrow] = useState(false);
 
 
   return (
@@ -46,15 +31,71 @@ export default function Page() {
         {status === "waiting" ? "Waiting for throw..." : "Throw received!"}
       </h1>
 
+      {/* Throw type dropdown */}
+      <div className="flex justify-center mb-6">
+        <label className="flex items-center gap-3 text-lg font-semibold">
+          Throw Type:
+          <select
+            value={selectedThrowType}
+            onChange={async (e) => {
+              const newType = e.target.value as ThrowType;
+              setSelectedThrowType(newType);
+              await fetch("/throw-type", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ throwType: newType }),
+              });
+            }}
+            className="bg-gray-800 border border-gray-600 text-white rounded px-3 py-2 text-base font-normal focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {THROW_TYPE_OPTIONS.map((type) => (
+              <option key={type} value={type}>
+                {displayNameForThrowType(type)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          onClick={async () => {
+            setIsLoadingCurrentThrow(true);
+            try {
+              const data = throwEventSchema.parse(await fetchThrowEvent(selectedThrowType));
+              setCurrentThrow(data);
+              setStatus("received");
+            } catch (err: unknown) {
+              console.error(err);
+              setError("Failed to fetch/validate throw");
+            } finally {
+              setIsLoadingCurrentThrow(false);
+            }
+          }}
+          disabled={isLoadingCurrentThrow}
+          className={`bg-green-600 text-white px-4 py-2 rounded ml-6 flex items-center gap-2 ${isLoadingCurrentThrow ? "opacity-60 cursor-not-allowed" : "hover:bg-green-500 cursor-pointer"}`}
+        >
+          {isLoadingCurrentThrow && (
+            <span
+              style={{
+                width: 16,
+                height: 16,
+                borderRadius: "50%",
+                border: "2px solid white",
+                borderTopColor: "transparent",
+                display: "inline-block",
+                animation: "spin 0.75s linear infinite",
+              }}
+            />
+          )}
+          {isLoadingCurrentThrow ? "Working..." : "Analyze Throw"}
+        </button>
+      </div>
+
+      <style>{spinKeyframes}</style>
+
       {currentThrow && currentThrow.infractions.length === 0 && (
         <h2 className="text-2xl font-bold mb-4 text-center">
           Distance: {currentThrow.distance.toFixed(2)}m
         </h2>
       )}
-
-      <h3 className="text-xl font-semibold mb-2 text-center">
-        {currentThrow ? `Throw type: ${displayNameForThrowType(currentThrow.throwType)}` : "No throw data yet"}
-      </h3>
 
       {/* Error */}
       {error && <p className="text-red-500 mb-4">{error}</p>}
@@ -78,14 +119,14 @@ export default function Page() {
         {/* Field */}
         <div className="col-span-9 flex justify-center">
           {currentThrow ? (
-            currentThrow.throwType === ThrowType.JAVELIN ? (
+            selectedThrowType === ThrowType.JAVELIN ? (
                 <JavelinField
                   landingPoint={currentThrow.landing_point}
                   infractions={currentThrow.infractions.map((i) => i.type)}
                 />
               ) : (
                 <CircleField
-                  throwType={currentThrow.throwType}
+                  throwType={selectedThrowType}
                   landingPoint={currentThrow.landing_point}
                   infractions={currentThrow.infractions.map((i) => i.type)}
                 />
