@@ -6,15 +6,6 @@ import {
 } from "./schemas";
 import { v4 as uuidv4 } from "uuid";
 
-let cachedThrowEvent: ThrowEvent | null = null;
-let cacheTimestamp: number = 0;
-const CACHE_DURATION_MS: number = 10_000;
-
-function randomThrowType(): ThrowType {
-  const types = Object.values(ThrowType);
-  return types[Math.floor(Math.random() * types.length)];
-}
-
 function randomInfractions(): { type: Infraction; confidence: number }[] {
   const infractions: { type: Infraction; confidence: number }[] = [];
   if (Math.random() < 0.3) {
@@ -35,15 +26,11 @@ function randomInfractions(): { type: Infraction; confidence: number }[] {
   return infractions;
 }
 
-export async function fetchThrowEvent(): Promise<ThrowEvent> {
+export async function fetchThrowEvent(
+  throwType: ThrowType,
+): Promise<ThrowEvent> {
   await new Promise((res) => setTimeout(res, 250)); // simulate network delay
 
-  const now = Date.now();
-  if (cachedThrowEvent && now - cacheTimestamp < CACHE_DURATION_MS) {
-    return cachedThrowEvent;
-  }
-
-  const throwType = randomThrowType();
   const { circleDiameter, fieldLength } =
     circleFieldDimsForThrowType(throwType);
   const randDistanceBase = Math.random() * fieldLength;
@@ -60,7 +47,7 @@ export async function fetchThrowEvent(): Promise<ThrowEvent> {
   // cumulative probability of 26.5% chance of infraction
   const infractions = infractionsChance < 0.4 ? randomInfractions() : [];
 
-  cachedThrowEvent = {
+  return {
     throwId: uuidv4(),
     timestamp: new Date().toISOString(),
     throwType,
@@ -73,7 +60,4 @@ export async function fetchThrowEvent(): Promise<ThrowEvent> {
     ].sort(() => Math.random() - 0.5),
     landing_point: infractions.length ? undefined : [randomX, randomY],
   };
-  cacheTimestamp = now;
-
-  return cachedThrowEvent;
 }
