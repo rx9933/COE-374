@@ -14,7 +14,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 sys.path.insert(0, str(_PROJECT_ROOT / "MathScripts"))
 
-from CVScripts.video_detection import (
+from CVScripts.better_video_detection import (
     extract_trajectory_from_video,
     PROCESS_WIDTH,
     PROCESS_HEIGHT,
@@ -71,29 +71,31 @@ def run_pipeline(video_paths, P_list, dt, g, orig_sizes, pixel_sigma=1.0, physic
 
     pixels_for_draw = [[positions_per_camera[i][t] for t in range(n_frames)] for i in range(n_cameras)]
     pixels = []
+
+    print("This is pixels_for_draw: \n", pixels_for_draw)
     for i in range(n_cameras):
         w_orig, h_orig = orig_sizes[i]
         scaled = []
         for t in range(n_frames):
             cx, cy = pixels_for_draw[i][t][0], pixels_for_draw[i][t][1]
             scaled.append(np.array([
-                cx * w_orig / float(PROCESS_WIDTH),
+                cx * w_orig / PROCESS_WIDTH,
                 cy * h_orig / float(PROCESS_HEIGHT),
             ], dtype=np.float64))
         pixels.append(scaled)
 
+    #print("Length of pixels: \n", len(pixels))
     X_opt, cov, _ = optimize_trajectory(
         P_list, pixels, dt=dt, g=np.asarray(g, dtype=np.float64), drag=0.0,
         pixel_sigma=pixel_sigma, physics_sigma=physics_sigma, omega_phys=omega_phys,
     )
-
     start_per_cam = [n_frames_per_cam[i] - n_common for i in range(n_cameras)]
     frame_indices = [
         [start_per_cam[i] + valid_t[t] for t in range(n_frames)]
         for i in range(n_cameras)
     ]
     frame_indices_all = [[start_per_cam[i] + t for t in range(n_frames_raw)] for i in range(n_cameras)]
-    return X_opt, cov, frame_indices, pixels_for_draw, frame_indices_all, positions_all_frames, detected_all_frames
+    return X_opt, cov, frame_indices, pixels_for_draw, frame_indices_all, positions_all_frames, detected_all_frames, pixels
 
 
 def plot_3d_trajectory(X_opt, cov=None, out_path="trajectory_3d.png"):
@@ -107,9 +109,11 @@ def plot_3d_trajectory(X_opt, cov=None, out_path="trajectory_3d.png"):
     fig = plt.figure(figsize=(10, 6))
     ax = fig.add_subplot(111, projection="3d")
 
-    frame_index = np.arange(n)
-    sc = ax.scatter(X_opt[:, 0], X_opt[:, 1], X_opt[:, 2], c=frame_index, cmap="viridis", s=25, edgecolors="none")
-    ax.plot(X_opt[:, 0], X_opt[:, 1], X_opt[:, 2], "k-", alpha=0.25, linewidth=0.8)
+    mask = X_opt[:, 0] > -10000
+    X_plot = X_opt[mask]
+    frame_index = np.arange(n)[mask]
+    sc = ax.scatter(X_plot[:, 0], X_plot[:, 1], X_plot[:, 2], c=frame_index, cmap="viridis", s=200, edgecolors="none")
+    ax.plot(X_plot[:, 0], X_plot[:, 1], X_plot[:, 2], "k-", alpha=0.25, linewidth=1.5)
 
     #if cov is not None and np.all(np.isfinite(cov)):
     #    max_std = np.max(np.sqrt(np.diag(cov)))
@@ -128,16 +132,49 @@ def plot_3d_trajectory(X_opt, cov=None, out_path="trajectory_3d.png"):
     #        z = np.outer(np.ones_like(u), np.cos(v))
     #        pts = np.column_stack([x.ravel(), y.ravel(), z.ravel()]) @ (Q * radii).T + X_opt[t]
     #        ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], color="gray", alpha=0.15, s=1)
-    ax.set_xlabel("x (m)")
-    ax.set_ylabel("y (m)")
-    ax.set_zlabel("z (m)")
+    ax.set_xlabel("x (m)", fontsize=20)
+    ax.set_ylabel("y (m)", fontsize=20)
+    ax.set_zlabel("z (m)", fontsize=20)
     cbar = fig.colorbar(sc, ax=ax, shrink=0.6)
-    cbar.set_label("Frame")
+    cbar.set_label("Frame", fontsize=20)
     plt.tight_layout()
     plt.savefig(out_path, dpi=120)
     print(f"Saved: {out_path}")
     plt.show()
 
+def plot_2d_pixels(pixels, dimensions, out_path="trajectory_2d.png"):
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("Install matplotlib to plot: pip install matplotlib")
+        return
+    pixels = np.asarray(pixels)
+    print("This is pixels: \n", pixels)
+    print("u range:", pixels[:, 0].min(), pixels[:, 0].max())
+    print("v range:", pixels[:, 1].min(), pixels[:, 1].max())
+    print("frame size:", dimensions)
+    n = len(pixels)
+    fig = plt.figure(figsize=(10, 6))
+    ax = fig.add_subplot(111)
+    sc = ax.scatter(pixels[:, 0], pixels[:, 1], c=[i for i in range(n)], cmap="viridis", s=60, edgecolors="none")
+    ax.plot(pixels[:, 0], pixels[:, 1], "k-", alpha=0.25, linewidth=1.5)
+    ax.set_xlabel("u (pixels)", fontsize=20)
+    ax.set_ylabel("v (pixels)", fontsize=20)
+    #make lines at dimensions
+    ax.axvline(x=dimensions[0], color='r', linestyle='--')
+    ax.axhline(y=dimensions[1], color='r', linestyle='--')
+    ax.axvline(x=0, color='r', linestyle='--')
+    ax.axhline(y=0, color='r', linestyle='--')
+    #make the size of the plot the same as the frame size
+    ax.set_xlim(0, dimensions[0])
+    ax.set_ylim(0, dimensions[1])
+    ax.invert_yaxis()
+    cbar = fig.colorbar(sc, ax=ax, shrink=0.6)
+    cbar.set_label("Frame", fontsize=20)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=120)
+    print(f"Saved: {out_path}")
+    plt.show()
 
 def save_frames(video_paths, frame_indices, out_dir, pixels=None, detected=None, process_size=PROCESS_SIZE, box_half_size=30):
     out_dir = Path(out_dir)
@@ -173,14 +210,12 @@ def save_frames(video_paths, frame_indices, out_dir, pixels=None, detected=None,
                 cx_proc, cy_proc = float(pixels[i][t][0]), float(pixels[i][t][1])
                 cx = cx_proc * w / pw
                 cy = cy_proc * h / ph
-                # Scale box size with frame so it's visible at any resolution (was 30 in process space)
                 box_half_w = max(15, int(round(box_half_size * w / pw)))
                 box_half_h = max(15, int(round(box_half_size * h / ph)))
                 x1 = int(round(cx)) - box_half_w
                 y1 = int(round(cy)) - box_half_h
                 x2 = int(round(cx)) + box_half_w
                 y2 = int(round(cy)) + box_half_h
-                # Clamp to image so the box is always visible
                 x1 = max(0, min(w - 2, x1))
                 y1 = max(0, min(h - 2, y1))
                 x2 = max(x1 + 4, min(w, x2))
@@ -231,8 +266,8 @@ def save_frames(video_paths, frame_indices, out_dir, pixels=None, detected=None,
 
 def main():
     video_paths = [
-        "sample_data/full_trim_cam1_undistorted.mp4",
-        "sample_data/full_trim_cam2_undistorted.mp4",
+        "sample_data/full_trim_cam1.mp4",
+        "sample_data/full_trim_cam2.mp4",
     ]
     P_list_path = "Video_Camera_Processing/P_list.npy"
     dt = 1.0 / 60.0
@@ -255,7 +290,7 @@ def main():
 
     orig_sizes = [(1920, 1440), (3840, 2160)]
 
-    X_opt, cov, frame_indices, pixels, frame_indices_all, pixels_all_frames, detected_all_frames = run_pipeline(
+    X_opt, cov, frame_indices, pixels, frame_indices_all, pixels_all_frames, detected_all_frames, pixels_for_camera = run_pipeline(
         [str(p) for p in video_paths],
         P_list=P_list,
         dt=dt,
@@ -271,7 +306,21 @@ def main():
     print(f"  x range: [{X_opt[:, 0].min():.3f}, {X_opt[:, 0].max():.3f}] m")
     print(f"  y range: [{X_opt[:, 1].min():.3f}, {X_opt[:, 1].max():.3f}] m")
     print(f"  z range: [{X_opt[:, 2].min():.3f}, {X_opt[:, 2].max():.3f}] m")
+
+    for i in range(len(X_opt)):
+        print("--------------------------------")
+        print(f"Frame {i}")
+        print(f"Pixel: {pixels_for_camera[0][i]}, {pixels_for_camera[1][i]}")
+        print(f"Position: {X_opt[i]}")
+        print("--------------------------------")
+
+
     plot_3d_trajectory(X_opt, cov=cov, out_path=out_path)
+
+    for i in range(len(pixels)):
+        plot_2d_pixels(pixels_for_camera[i], dimensions=orig_sizes[i], out_path=f"trajectory_2d_{i}.png")
+
+    
 
     save_frames(video_paths, frame_indices_all, side_by_side_dir, pixels=pixels_all_frames, detected=detected_all_frames)
 

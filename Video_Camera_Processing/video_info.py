@@ -41,21 +41,19 @@ def get_video_info(video_path):
     return n_frames, width, height, fps
 
 
-if len(sys.argv) > 1:
-    video_path = sys.argv[1]
-else:
-    video_path = "sample_data/full_trim_cam1.mp4"
 
-try:
-    n_frames, width, height, fps = get_video_info(video_path)
-except FileNotFoundError:
-    print("ffprobe not found. Install ffmpeg (e.g. brew install ffmpeg).")
-    sys.exit(1)
-except Exception as e:
-    print(f"Error: {e}")
-    sys.exit(1)
+video_path = ["sample_data/full_trim_cam1.mp4", "sample_data/full_trim_cam2.mp4"]
 
-print(f"Video: {video_path}")
-print(f"  Frames:  {n_frames if n_frames is not None else 'unknown'}")
-print(f"  Resolution: {width} x {height}")
-print(f"  FPS: {fps}")
+for path in video_path:
+    try:
+        n_frames, width, height, fps = get_video_info(path)
+    except FileNotFoundError:
+        print("ffprobe not found. Install ffmpeg (e.g. brew install ffmpeg).")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    print(f"Video: {path}")
+    print(f"  Frames:  {n_frames if n_frames is not None else 'unknown'}")
+    print(f"  Resolution: {width} x {height}")
+    print(f"  FPS: {fps}")

@@ -23,7 +23,12 @@ def dlt_triangulation(P_list, pixels):
         A.append(u * P[2] - P[0])
         A.append(v * P[2] - P[1])
 
+    #print("This is A: \n", A)
+    #print("This is P:", P_list)
+
     A = np.vstack(A)
+    #print("This is A: \n", A)
+    #print("Size of A: \n", A.shape)
 
     _, _, Vt = np.linalg.svd(A)
     X_h = Vt[-1]
@@ -55,7 +60,7 @@ def trajectory_residual(params, P_list, pixels, n_timesteps, omega_phys=1.0, dt=
 
 def optimize_trajectory(P_list, pixels, dt=1.0, g=None, drag=0.0, pixel_sigma=1.0, physics_sigma=0.01, omega_phys=1.0):
     if g is None:
-        g = np.array([0, -9.81, 0])
+        g = np.array([0, 0, -9.81])
     n_cameras = len(P_list)
     n_timesteps = len(pixels[0])
 
@@ -141,6 +146,9 @@ if __name__ == "__main__":
         pixel_sigma=1.0, physics_sigma=1.0, omega_phys=1.0
     )
     time_end = time.time()
+
+
+
     print("Time taken: {:.4f} s".format(time_end - time_start))
     print("Trajectory shape: {} timesteps x 3".format(n_timesteps))
     print("Optimized (first 3, last 2):\n", np.vstack([X_opt[:3], X_opt[-2:]]))
