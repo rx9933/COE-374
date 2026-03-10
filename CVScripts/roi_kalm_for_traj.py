@@ -522,65 +522,96 @@ def assemble_panels(panels: list[tuple[np.ndarray, str]]):
 
   return np.vstack(rows)
 
-
-
 def extract_trajectory_from_video(video_path: str, max_frames: Optional[int] = None):
-  cap = cv2.VideoCapture(video_path)
-  if not cap.isOpened():
-    raise FileNotFoundError(f"Cannot open video: {video_path}")
-  fps = cap.get(cv2.CAP_PROP_FPS)
-  bg_sub = cv2.createBackgroundSubtractorMOG2(
-    history=MOG2_HISTORY,
-    varThreshold=MOG2_VAR_THRESHOLD,
-    detectShadows=MOG2_DETECT_SHADOWS,
-  )
-  kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (MORPH_OPEN_KERNEL, MORPH_OPEN_KERNEL))
-  kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (MORPH_CLOSE_KERNEL, MORPH_CLOSE_KERNEL))
-  tracker = Tracker()
-  positions = []
-  detected = []
+    """
+    Extract the shot put trajectory from a video using the ROI-aware tracker.
+    Returns:
+      - positions: list of np.array([x, y]) in process-space
+      - detected: list of bool (True if detection, False if only prediction)
+      - fps: frames per second of video
+      - frame_size: (width, height) of processed frames
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise FileNotFoundError(f"Cannot open video: {video_path}")
 
-  frame_n = 0
-  while True:
-    ret, frame_orig = cap.read()
-    if not ret:
-      break
-    if max_frames is not None and frame_n >= max_frames:
-      break
+    fps = cap.get(cv2.CAP_PROP_FPS)
 
-    frame_n += 1
-    frame_proc = cv2.resize(frame_orig, (PROCESS_WIDTH, PROCESS_HEIGHT))
-    gray = cv2.cvtColor(frame_proc, cv2.COLOR_BGR2GRAY)
-    fg_mask = bg_sub.apply(gray)
-    _, fg_mask = cv2.threshold(fg_mask, 200, 255, cv2.THRESH_BINARY)
-    mask_clean = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel_open)
-    mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel_close)
-    candidates, _, _, _, _, _ = detect_candidates(mask_clean)
+    # Background subtractor and morphology kernels
+    bg_sub = cv2.createBackgroundSubtractorMOG2(
+        history=MOG2_HISTORY,
+        varThreshold=MOG2_VAR_THRESHOLD,
+        detectShadows=MOG2_DETECT_SHADOWS,
+    )
+    kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (MORPH_OPEN_KERNEL, MORPH_OPEN_KERNEL))
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (MORPH_CLOSE_KERNEL, MORPH_CLOSE_KERNEL))
 
+    tracker = Tracker()
+    positions = []
+    detected = []
 
-    if tracker.initialized:
-      tracker.predict()
-    best = pick_best_candidate(candidates, tracker)
+    frame_n = 0
+    while True:
+        ret, frame_orig = cap.read()
+        if not ret:
+            break
+        if max_frames is not None and frame_n >= max_frames:
+            break
 
-    if best:
-      cx, cy, radius, _ = best
-      tracker.correct(cx, cy)
-      tracker.missed = 0
-      positions.append(np.array([float(cx), float(cy)], dtype=np.float64))
-      detected.append(True)
-    else:
-      tracker.missed += 1
-      if tracker.missed > MAX_MISSED_FRAMES:
-        tracker.reset()
-      if tracker.predicted is not None:
-        positions.append(np.array([float(tracker.predicted[0]), float(tracker.predicted[1])], dtype=np.float64))
-        detected.append(False)
-      else:
-        positions.append(None)
-        detected.append(False)
+        frame_n += 1
+        frame_proc = cv2.resize(frame_orig, (PROCESS_WIDTH, PROCESS_HEIGHT))
+        gray = cv2.cvtColor(frame_proc, cv2.COLOR_BGR2GRAY)
 
-  cap.release()
-  return positions, detected, fps, (PROCESS_WIDTH, PROCESS_HEIGHT)
+        # Get ROI based on tracker prediction
+        roi_slice, roi_offset = get_roi_from_prediction(tracker, gray.shape)
+
+        # Background subtraction (ROI or full frame)
+        if tracker.initialized and tracker.use_roi:
+            roi_mask = np.zeros_like(gray)
+            roi_mask[roi_slice] = gray[roi_slice]
+            fg_mask_full = bg_sub.apply(roi_mask)
+            fg_mask = np.zeros_like(gray)
+            fg_mask[roi_slice] = fg_mask_full[roi_slice]
+        else:
+            fg_mask = bg_sub.apply(gray)
+
+        # Threshold + morphology
+        _, fg_mask = cv2.threshold(fg_mask, 200, 255, cv2.THRESH_BINARY)
+        mask_clean = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel_open)
+        mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel_close)
+
+        # Detect candidates in ROI or full frame
+        if tracker.initialized and tracker.use_roi:
+            candidates, *_ = detect_candidates_in_roi(mask_clean, roi_slice, roi_offset)
+        else:
+            candidates, *_ = detect_candidates_full(mask_clean)
+
+        # Kalman prediction
+        if tracker.initialized:
+            tracker.predict()
+
+        # Pick best candidate
+        best = pick_best_candidate(candidates, tracker)
+
+        if best:
+            cx, cy, radius, _ = best
+            tracker.correct(cx, cy)
+            tracker.missed = 0
+            positions.append(np.array([float(cx), float(cy)], dtype=np.float64))
+            detected.append(True)
+        else:
+            tracker.missed += 1
+            if tracker.missed > MAX_MISSED_FRAMES:
+                tracker.reset()
+            if tracker.predicted is not None:
+                positions.append(np.array([float(tracker.predicted[0]), float(tracker.predicted[1])], dtype=np.float64))
+                detected.append(False)
+            else:
+                positions.append(None)
+                detected.append(False)
+
+    cap.release()
+    return positions, detected, fps, (PROCESS_WIDTH, PROCESS_HEIGHT)
 
 def main(video_path: str, render_visualization: bool = True):
   cap = cv2.VideoCapture(video_path)
