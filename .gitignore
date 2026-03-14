@@ -152,3 +152,12 @@ sample_data/trajectory_side_by_side/
 sample_data/*.mp4
 website/node_modules/
 website/.next/
+
+MathScripts/src/
+MathScripts/target/
+MathScripts/Cargo.lock
+MathScripts/Cargo.toml
+
+
+
+OldScripts/

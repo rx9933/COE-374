@@ -9,6 +9,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import time
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_PROJECT_ROOT))
@@ -265,6 +266,8 @@ def save_frames(video_paths, frame_indices, out_dir, pixels=None, detected=None,
 
 
 def main():
+
+    start_time = time.perf_counter()
     video_paths = [
         "sample_data/full_trim_cam1.mp4",
         "sample_data/full_trim_cam2.mp4",
@@ -313,6 +316,9 @@ def main():
         print(f"Pixel: {pixels_for_camera[0][i]}, {pixels_for_camera[1][i]}")
         print(f"Position: {X_opt[i]}")
         print("--------------------------------")
+
+    end_time = time.perf_counter()
+    print(f"Time taken: {end_time - start_time:.2f} seconds")
 
 
     plot_3d_trajectory(X_opt, cov=cov, out_path=out_path)
