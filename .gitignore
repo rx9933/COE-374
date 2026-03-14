@@ -140,3 +140,24 @@ grounding/version.py
 
 vis/
 tmp/
+
+
+
+.cursor/
+.DS_Store
+trajectory_3d.png
+MathScripts/trajectory_and_uncertainty.png
+Video_Camera_Processing/camera_poses.png
+sample_data/trajectory_side_by_side/
+sample_data/*.mp4
+website/node_modules/
+website/.next/
+
+MathScripts/src/
+MathScripts/target/
+MathScripts/Cargo.lock
+MathScripts/Cargo.toml
+
+
+
+OldScripts/
