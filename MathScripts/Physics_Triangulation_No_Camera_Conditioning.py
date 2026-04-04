@@ -37,8 +37,10 @@ def dlt_triangulation(P_list, pixels):
     return X
 
 
-def trajectory_residual(params, P_list, pixels, n_timesteps, omega_phys=1.0, dt=1.0, g=None, drag=0.0, pixel_sigma=1.0, physics_sigma=0.01):
-    X_vars = params.reshape((n_timesteps, 3))
+def trajectory_residual(params, P_list, pixels, n_timesteps, omega_phys=1.0, dt=1.0, g=None, pixel_sigma=1.0, physics_sigma=0.01):
+    n_x = 3 * n_timesteps
+    X_vars = params[:n_x].reshape((n_timesteps, 3))
+    drag = params[n_x]
     residuals = []
 
     for t in range(n_timesteps):
@@ -52,7 +54,7 @@ def trajectory_residual(params, P_list, pixels, n_timesteps, omega_phys=1.0, dt=
         X_prev = X_vars[t - 1]
         X_curr = X_vars[t]
         X_next = X_vars[t + 1]
-        phys_res = (X_next - 2 * X_curr + X_prev - g * dt**2 - drag * dt**2) / physics_sigma
+        phys_res = (X_next - 2 * X_curr + X_prev - g * dt**2 + drag * 0.5 * dt * (X_next - X_prev)) / physics_sigma
         residuals.append(omega_phys * phys_res)
 
     return np.concatenate(residuals)
@@ -68,19 +70,23 @@ def optimize_trajectory(P_list, pixels, dt=1.0, g=None, drag=0.0, pixel_sigma=1.
     for t in range(n_timesteps):
         pixel_t = [pixels[i][t] for i in range(n_cameras)]
         X_init.append(dlt_triangulation(P_list, pixel_t))
-    params_init = np.array(X_init).flatten()
+    params_init = np.concatenate([np.array(X_init).flatten(), [float(drag)]])
 
-    result = least_squares(trajectory_residual, params_init, args=(P_list, pixels, n_timesteps, omega_phys, dt, g, drag, pixel_sigma, physics_sigma), method="lm")
+    result = least_squares(trajectory_residual, params_init, args=(P_list, pixels, n_timesteps, omega_phys, dt, g, pixel_sigma, physics_sigma), method="lm",)
 
-    X_opt = result.x.reshape((n_timesteps, 3))
+    n_x = 3 * n_timesteps
+    X_opt = result.x[:n_x].reshape((n_timesteps, 3))
+    drag_opt = float(result.x[n_x])
+
     J = result.jac
-    JTJ = J.T @ J
+    J_x = J[:, :n_x]
+    JTJ = J_x.T @ J_x
     try:
         cov = np.linalg.inv(JTJ)
     except np.linalg.LinAlgError:
-        cov = np.full((3 * n_timesteps, 3 * n_timesteps), np.nan)
+        cov = np.full((n_x, n_x), np.nan)
 
-    return X_opt, cov, result
+    return X_opt, cov, drag_opt, result
 
 
 #==============================================
@@ -141,18 +147,17 @@ if __name__ == "__main__":
         pixels.append([project_point(P_list[i], traj_true[t]) + np.random.randn(2) * 2.0 for t in range(n_timesteps)])
 
     time_start = time.time()
-    X_opt, cov, result = optimize_trajectory(
-        P_list, pixels, dt=dt, g=g, drag=0.0,
-        pixel_sigma=1.0, physics_sigma=1.0, omega_phys=1.0
+    X_opt, cov, drag_opt, result = optimize_trajectory(
+        P_list, pixels, dt=dt, g=g, drag=drag_coef,
+        pixel_sigma=1.0, physics_sigma=1.0, omega_phys=1.0,
     )
     time_end = time.time()
 
-
-
     print("Time taken: {:.4f} s".format(time_end - time_start))
+    print("Optimized drag: {:.6f} (true sim drag_coef: {:.6f})".format(drag_opt, drag_coef))
     print("Trajectory shape: {} timesteps x 3".format(n_timesteps))
-    print("Optimized (first 3, last 2):\n", np.vstack([X_opt[:3], X_opt[-2:]]))
-    print("True (first 3, last 2):\n", np.vstack([traj_true[:3], traj_true[-2:]]))
+    print("Optimized:\n", np.vstack([X_opt[:3], X_opt[-2:]]))
+    print("True:\n", np.vstack([traj_true[:3], traj_true[-2:]]))
     print("Mean position error (m):", np.mean(np.linalg.norm(X_opt - traj_true, axis=1)))
 
     # Plot: true vs optimized trajectory and uncertainty ellipsoids
@@ -193,7 +198,7 @@ if __name__ == "__main__":
             if xe is not None:
                 ax1.plot_surface(xe, ye, ze, alpha=0.15, color="red")
         ax1.set_xlabel("x"); ax1.set_ylabel("y"); ax1.set_zlabel("z")
-        ax1.legend(); ax1.set_title("3D: true vs optimized + 1σ ellipsoids")
+        ax1.legend(); ax1.set_title("3D: true vs optimized")
 
         ax2 = fig.add_subplot(132)
         ax2.plot(traj_true[:, 0], traj_true[:, 1], "b-o", label="True")
@@ -208,7 +213,7 @@ if __name__ == "__main__":
             circle = np.column_stack([np.cos(angles), np.sin(angles)])
             ellipse = X_opt[t, :2] + cov_scale * (circle @ (Q * np.sqrt(eigs)).T)
             ax2.plot(ellipse[:, 0], ellipse[:, 1], "r-", alpha=0.5)
-        ax2.set_xlabel("x"); ax2.set_ylabel("y"); ax2.legend(); ax2.set_title("xy + 1σ ellipses")
+        ax2.set_xlabel("x"); ax2.set_ylabel("y"); ax2.legend(); ax2.set_title("xy")
         ax2.set_aspect("equal"); ax2.grid(True)
 
         ax3 = fig.add_subplot(133)
@@ -225,7 +230,7 @@ if __name__ == "__main__":
             circle = np.column_stack([np.cos(angles), np.sin(angles)])
             ellipse = X_opt[t, [0, 2]] + cov_scale * (circle @ (Q * np.sqrt(eigs)).T)
             ax3.plot(ellipse[:, 0], ellipse[:, 1], "r-", alpha=0.5)
-        ax3.set_xlabel("x"); ax3.set_ylabel("z"); ax3.legend(); ax3.set_title("xz + 1σ ellipses")
+        ax3.set_xlabel("x"); ax3.set_ylabel("z"); ax3.legend(); ax3.set_title("xz")
         ax3.set_aspect("equal"); ax3.grid(True)
 
         plt.tight_layout()
