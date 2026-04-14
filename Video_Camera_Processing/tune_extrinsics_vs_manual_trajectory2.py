@@ -66,7 +66,7 @@ W_START_Y = 1.0
 W_START_Z = 0.5
 LAMBDA_REPROJ = 0.0001
 W_PHYS = 0.0
-LAMBDA_PARABOLIC = 0.001
+LAMBDA_PARABOLIC = 0.000
 
 
 def _parabolic_penalty(X_opt, dt):
@@ -458,21 +458,19 @@ def main():
     _, best_last, _, best_meta, stacks = evaluate_extrinsics(best_x, orig_sizes, DT, g, PIXEL_SIGMA, PHYSICS_SIGMA, OMEGA_PHYS, False)
     K_best, R_best, t_best = stacks
 
-    #np.save(R_LIST_PATH, R_best)
-    #np.save(T_LIST_PATH, t_best)
-    P_best = _P_stack_from_extrinsics(K_best, R_best, t_best)
-    #np.save(P_LIST_PATH, P_best)
     save_extrinsics_tune2_checkpoint(K_best, R_best, t_best)
 
     print(
-        "BEST score=%s last_xyz=%s meta=%s | wrote R,t -> %s, %s (K unchanged on disk) | derived P_list -> %s | mirrored -> extrinsics_tune2_*_list.npy (DE nfev=%s nit=%s)"
+        "BEST score=%s last_xyz=%s meta=%s | wrote %s %s %s %s under %s (canonical K/R/t/P on disk unchanged) | DE nfev=%s nit=%s"
         % (
             best_score,
             best_last,
             best_meta,
-            R_LIST_PATH,
-            T_LIST_PATH,
-            P_LIST_PATH,
+            EXTRINSICS_TUNE2_K_LIST_PATH.name,
+            EXTRINSICS_TUNE2_R_LIST_PATH.name,
+            EXTRINSICS_TUNE2_T_LIST_PATH.name,
+            EXTRINSICS_TUNE2_P_LIST_PATH.name,
+            VC_DIR,
             getattr(res, "nfev", "?"),
             getattr(res, "nit", "?"),
         ),

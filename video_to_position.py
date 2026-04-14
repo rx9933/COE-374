@@ -362,7 +362,7 @@ def main():
     g = [0.0, 0.0, -9.81]
     pixel_sigma = 1.0
     physics_sigma = 0.1
-    omega_phys = 0.0
+    omega_phys = 10000.0
     max_frames = None
     interpolate_num_points = 30
     out_path = "trajectory_3d.png"

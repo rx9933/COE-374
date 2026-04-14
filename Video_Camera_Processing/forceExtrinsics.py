@@ -18,8 +18,8 @@ CAMERA_Y_M_CAM1 = -4.572
 CAMERA_Z_M = 1.3081
 show_plot = True
 
-TARGET_LOOK_AT_CAM0 = np.array([0.0, 0.0, 1.3081], dtype=np.float64)
-TARGET_LOOK_AT_CAM1 = np.array([0.0, 0.0, 1.3081], dtype=np.float64)
+TARGET_LOOK_AT_CAM0 = np.array([0.0, -1.83, 1.3081], dtype=np.float64)
+TARGET_LOOK_AT_CAM1 = np.array([0.0, 0.75, 1.3081], dtype=np.float64)
 WORLD_UP = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
 
@@ -43,7 +43,7 @@ def look_at(
     else:
         right = right / nr
     up = np.cross(right, forward)
-    R = np.column_stack([right, up, forward]).T
+    R = np.column_stack([right, -up, forward]).T
     return R
 
 

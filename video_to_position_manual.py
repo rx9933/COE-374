@@ -371,15 +371,15 @@ def main():
 
     start_time = time.perf_counter()
     video_paths = [
-        "Video_Camera_Processing/throws/Arushi_throw_0.mp4",
-        "Video_Camera_Processing/throws/Arushi_throw_1.mp4",
+        "Video_Camera_Processing/throws/Rushil_throw_0.mp4",
+        "Video_Camera_Processing/throws/Rushil_throw_1.mp4",
     ]
     P_list_path = "Video_Camera_Processing/P_list.npy"
     dt = 1.0 / 30.0
     g = [0.0, 0.0, -9.81]
     pixel_sigma = 1.0
     physics_sigma = 0.1
-    omega_phys = 0.0
+    omega_phys = 0.0 #10000.0
     out_path = "trajectory_3d.png"
     side_by_side_dir = _PROJECT_ROOT / "sample_data" / "trajectory_side_by_side_manual"
     video_paths = [Path(p) for p in video_paths]
