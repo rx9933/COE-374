@@ -14,19 +14,13 @@ Controls:
 
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 import argparse
+from pathlib import Path
 from collections import deque
 from dataclasses import dataclass, field
 import time
 from typing import Optional, Tuple, List
-
-try:
-    from scipy.interpolate import CubicSpline as _ScipyCubicSpline
-
-    _HAS_SCIPY = True
-except ImportError:
-    _ScipyCubicSpline = None
-    _HAS_SCIPY = False
 
 DISPLAY_WIDTH  = 1920
 DISPLAY_HEIGHT = 1080
@@ -677,15 +671,15 @@ def main(video_path: str, render_visualization: bool = True):
 
 def extract_trajectory_from_video(video_path: str, max_frames: Optional[int] = None):
     """
-    Programmatic extractor using the ROI-priority pipeline in this module.
-
+    Programmatic extractor that uses the ROI-priority pipeline in this module.
+    Returns the same trajectory (red line) as shown in the visualization.
+    
     Returns:
-        positions: Per-frame list: detection (x, y) in process resolution, or None if no detection.
-        detected: Per-frame bool, True when ``positions[t]`` is a measurement (not prediction).
-        fps: Video frame rate.
-        (PROCESS_WIDTH, PROCESS_HEIGHT): Processing resolution.
-        trail: Detection-only polyline (append on each detection, clear on tracker reset,
-            at most ``TRAIL_LENGTH`` points). Same role as the red trail / ``test_cv_plot2``.
+        positions: List of (x, y) pixel coordinates for every frame (None if no position)
+        detected: List of booleans indicating if position came from detection (True) or prediction (False)
+        fps: Video frame rate
+        (PROCESS_WIDTH, PROCESS_HEIGHT): Processing dimensions
+        trail: List of all positions used for the red line trail (same as positions but filtered)
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -702,8 +696,6 @@ def extract_trajectory_from_video(video_path: str, max_frames: Optional[int] = N
 
     tracker = Tracker()
     trail = deque(maxlen=TRAIL_LENGTH)
-    positions = []
-    detected = []
     frame_n = 0
 
     while True:
@@ -732,154 +724,106 @@ def extract_trajectory_from_video(video_path: str, max_frames: Optional[int] = N
             cx, cy, _radius, _circ = best
             tracker.correct(cx, cy)
             tracker.missed = 0
-            pt = np.array([float(cx), float(cy)], dtype=np.float64)
-            positions.append(pt)
-            detected.append(True)
-            trail.append(pt.copy())
+            trail.append(np.array([float(cx), float(cy)], dtype=np.float64))
         else:
             tracker.missed += 1
             if tracker.missed > MAX_MISSED_FRAMES:
                 tracker.reset()
                 trail.clear()
-            positions.append(None)
-            detected.append(False)
 
     cap.release()
-    trail_out = [x.copy() for x in trail]
-    return positions, detected, fps, (PROCESS_WIDTH, PROCESS_HEIGHT), trail_out
-
-def _natural_cubic_spline_second_derivatives(t: np.ndarray, y: np.ndarray) -> np.ndarray:
-    n = len(t)
-    if n < 3:
-        return np.zeros(n, dtype=float)
-
-    h = np.diff(t)
-    alpha = np.zeros(n, dtype=float)
-    alpha[1:-1] = (3.0 / h[1:]) * (y[2:] - y[1:-1]) - (3.0 / h[:-1]) * (y[1:-1] - y[:-2])
-
-    l = np.ones(n, dtype=float)
-    mu = np.zeros(n, dtype=float)
-    z = np.zeros(n, dtype=float)
-
-    for i in range(1, n - 1):
-        l[i] = 2.0 * (t[i + 1] - t[i - 1]) - h[i - 1] * mu[i - 1]
-        mu[i] = h[i] / l[i]
-        z[i] = (alpha[i] - h[i - 1] * z[i - 1]) / l[i]
-
-    c = np.zeros(n, dtype=float)
-    for j in range(n - 2, -1, -1):
-        c[j] = z[j] - mu[j] * c[j + 1]
-
-    return c
+    
+    positions = list(trail)
+    detected = [True] * len(positions)
+    
+    return positions, detected, fps, (PROCESS_WIDTH, PROCESS_HEIGHT), positions
 
 
-def _evaluate_cubic_spline(t: np.ndarray, y: np.ndarray, c: np.ndarray, t_eval: np.ndarray) -> np.ndarray:
-    y_eval = np.empty_like(t_eval, dtype=float)
-    n = len(t)
-
-    for idx, x_val in enumerate(t_eval):
-        if x_val <= t[0]:
-            i = 0
-        elif x_val >= t[-1]:
-            i = n - 2
-        else:
-            i = np.searchsorted(t, x_val) - 1
-
-        h = t[i + 1] - t[i]
-        if h == 0:
-            y_eval[idx] = y[i]
-            continue
-
-        a = (t[i + 1] - x_val) / h
-        b = (x_val - t[i]) / h
-        y_eval[idx] = (
-            a * y[i]
-            + b * y[i + 1]
-            + ((a**3 - a) * c[i] + (b**3 - b) * c[i + 1]) * (h**2) / 6.0
-        )
-
-    return y_eval
-
-
-def fit_cubic_spline_trajectory(points: np.ndarray, num_samples: int = 200) -> np.ndarray:
-    """Resample a polyline (N, 2) with a natural cubic spline in normalized time [0, 1]."""
-    points = np.asarray(points, dtype=np.float64)
-    if points.shape[0] < 2:
-        return points
-
-    t = np.linspace(0.0, 1.0, points.shape[0])
-    x = points[:, 0]
-    y = points[:, 1]
-    c_x = _natural_cubic_spline_second_derivatives(t, x)
-    c_y = _natural_cubic_spline_second_derivatives(t, y)
-
-    t_sample = np.linspace(0.0, 1.0, num_samples)
-    x_sample = _evaluate_cubic_spline(t, x, c_x, t_sample)
-    y_sample = _evaluate_cubic_spline(t, y, c_y, t_sample)
-
-    return np.column_stack([x_sample, y_sample])
-
-
-def _interp_xy_natural_cubic(t_param: np.ndarray, xy: np.ndarray, t_eval: np.ndarray) -> np.ndarray:
-    x = xy[:, 0]
-    y = xy[:, 1]
-    c_x = _natural_cubic_spline_second_derivatives(t_param, x)
-    c_y = _natural_cubic_spline_second_derivatives(t_param, y)
-    x_ev = _evaluate_cubic_spline(t_param, x, c_x, t_eval)
-    y_ev = _evaluate_cubic_spline(t_param, y, c_y, t_eval)
-    return np.column_stack([x_ev, y_ev])
-
-
-def interpolate_at_same_time_intervals(
-    trajectory1: np.ndarray,
-    trajectory2: np.ndarray,
-    num_points: int = 100,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+# Enhanced plotting function that exactly matches the visualization
+def plot_trajectory_like_visualization(video_path, output_path="trajectory_plot.png"):
     """
-    Interpolate two (N, 2) trajectories at the same normalized times in [0, 1].
+    Plot the trajectory exactly as shown in the red line of the visualization.
     """
-    traj1 = np.asarray(trajectory1, dtype=np.float64)
-    traj2 = np.asarray(trajectory2, dtype=np.float64)
-    if traj1.size == 0 or traj2.size == 0:
-        raise ValueError("Trajectories must be non-empty (N, 2) arrays.")
-    if traj1.ndim != 2 or traj1.shape[1] != 2 or traj2.ndim != 2 or traj2.shape[1] != 2:
-        raise ValueError("trajectory1 and trajectory2 must have shape (N, 2).")
-
-    if traj1.shape[0] < 2:
-        traj1 = np.vstack([traj1, traj1])
-    if traj2.shape[0] < 2:
-        traj2 = np.vstack([traj2, traj2])
-
-    t1 = np.linspace(0.0, 1.0, len(traj1))
-    t2 = np.linspace(0.0, 1.0, len(traj2))
-    t_common = np.linspace(0.0, 1.0, num_points)
-
-    if _HAS_SCIPY:
-        cs_x1 = _ScipyCubicSpline(t1, traj1[:, 0], bc_type="natural")
-        cs_y1 = _ScipyCubicSpline(t1, traj1[:, 1], bc_type="natural")
-        cs_x2 = _ScipyCubicSpline(t2, traj2[:, 0], bc_type="natural")
-        cs_y2 = _ScipyCubicSpline(t2, traj2[:, 1], bc_type="natural")
-        interp1 = np.column_stack([cs_x1(t_common), cs_y1(t_common)])
-        interp2 = np.column_stack([cs_x2(t_common), cs_y2(t_common)])
-    else:
-        interp1 = _interp_xy_natural_cubic(t1, traj1, t_common)
-        interp2 = _interp_xy_natural_cubic(t2, traj2, t_common)
-
-    return interp1, interp2, t_common
-
-
-def interpolate_two_videos_at_common_times(
-    video_path1: str,
-    video_path2: str,
-    num_points: int = 100,
-    max_frames: Optional[int] = None,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Extract trails from two videos and spline-interpolate at shared normalized times."""
-    *_, trail1 = extract_trajectory_from_video(video_path1, max_frames=max_frames)
-    *_, trail2 = extract_trajectory_from_video(video_path2, max_frames=max_frames)
-    t1 = np.asarray(trail1, dtype=np.float64)
-    t2 = np.asarray(trail2, dtype=np.float64)
-    return interpolate_at_same_time_intervals(t1, t2, num_points=num_points)
+    # Extract trajectory including the trail
+    positions, detected, fps, (width, height), trail = extract_trajectory_from_video(video_path)
+    
+    if not trail:
+        print("No trajectory data found!")
+        return
+    
+    trail_array = np.array(trail)
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    
+    # Plot 1: Trajectory in image coordinates (like the red line)
+    ax1.plot(trail_array[:, 0], trail_array[:, 1], 'r-', linewidth=2.5, alpha=0.8, label='Trajectory (red line)')
+    
+    # Color code detection vs prediction
+    detection_colors = []
+    frame_idx = 0
+    for i, pos in enumerate(positions):
+        if pos is not None:
+            if detected[i]:
+                detection_colors.append(('green', frame_idx, 'Detected'))
+            else:
+                detection_colors.append(('orange', frame_idx, 'Predicted'))
+            frame_idx += 1
+    
+    # Plot points with colors
+    for color, idx, label in detection_colors:
+        ax1.scatter(trail_array[idx, 0], trail_array[idx, 1], 
+                   c=color, s=30, alpha=0.6, edgecolors='black', linewidth=0.5)
+    
+    # Mark start and end
+    ax1.scatter(trail_array[0, 0], trail_array[0, 1], 
+               c='blue', s=200, marker='*', label='Start', zorder=5)
+    ax1.scatter(trail_array[-1, 0], trail_array[-1, 1], 
+               c='red', s=200, marker='*', label='End', zorder=5)
+    
+    ax1.set_xlabel('X (pixels)', fontsize=12)
+    ax1.set_ylabel('Y (pixels)', fontsize=12)
+    ax1.set_title(f'Shot Put Trajectory (Red Line from Visualization)\nVideo: {Path(video_path).name}', fontsize=14)
+    ax1.invert_yaxis()  # Match image coordinates
+    ax1.grid(True, alpha=0.3)
+    ax1.legend()
+    
+    # Add text box with statistics
+    stats_text = f'Total frames: {len(positions)}\n'
+    stats_text += f'Valid positions: {len(trail)}\n'
+    stats_text += f'Detected: {sum(detected)}\n'
+    stats_text += f'Predicted: {len([d for d in detected if d is False])}\n'
+    stats_text += f'FPS: {fps:.1f}\n'
+    stats_text += f'X range: {trail_array[:, 0].min():.1f} - {trail_array[:, 0].max():.1f}\n'
+    stats_text += f'Y range: {trail_array[:, 1].min():.1f} - {trail_array[:, 1].max():.1f}'
+    
+    ax1.text(0.02, 0.98, stats_text, transform=ax1.transAxes, 
+             verticalalignment='top', fontsize=9,
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    # Plot 2: Position over time (like tracking visualization)
+    frames = range(len(trail))
+    ax2.plot(frames, trail_array[:, 0], 'r-', label='X coordinate', alpha=0.7)
+    ax2.plot(frames, trail_array[:, 1], 'b-', label='Y coordinate', alpha=0.7)
+    ax2.set_xlabel('Frame Number', fontsize=12)
+    ax2.set_ylabel('Pixel Coordinate', fontsize=12)
+    ax2.set_title('Position vs Time', fontsize=14)
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.show()
+    
+    print(f"\n=== Trajectory Statistics ===")
+    print(f"Total frames processed: {len(positions)}")
+    print(f"Frames with position (red line points): {len(trail)}")
+    print(f"  - Detected positions (green): {sum(detected)}")
+    print(f"  - Predicted positions (orange): {len([d for d in detected if d is False])}")
+    print(f"Trajectory length: {len(trail)} points")
+    print(f"Plot saved to: {output_path}")
+    
+    return trail_array, detected, fps
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Shot put tracker with ROI priority")

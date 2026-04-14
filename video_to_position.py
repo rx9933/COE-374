@@ -17,6 +17,7 @@ sys.path.insert(0, str(_PROJECT_ROOT / "MathScripts"))
 
 from CVScripts.better_video_detection import (
     extract_trajectory_from_video,
+    interpolate_at_same_time_intervals,
     PROCESS_WIDTH,
     PROCESS_HEIGHT,
 )
@@ -25,7 +26,45 @@ from MathScripts.Physics_Triangulation_No_Camera_Conditioning import optimize_tr
 PROCESS_SIZE = (PROCESS_WIDTH, PROCESS_HEIGHT)
 
 
-def run_pipeline(video_paths, P_list, dt, g, orig_sizes, pixel_sigma=1.0, physics_sigma=0.01, max_frames=None, omega_phys=1.0):
+def _fill_missing_uv_linear_even_frames(pos_list):
+    L = len(pos_list)
+    u = np.zeros(L, dtype=np.float64)
+    v = np.zeros(L, dtype=np.float64)
+    measured = np.zeros(L, dtype=bool)
+    for i, p in enumerate(pos_list):
+        if p is not None:
+            u[i] = float(np.asarray(p, dtype=np.float64).ravel()[0])
+            v[i] = float(np.asarray(p, dtype=np.float64).ravel()[1])
+            measured[i] = True
+    if not np.any(measured):
+        raise ValueError("No detections in segment; cannot interpolate.")
+    n_imputed = int(L - np.sum(measured))
+    if np.sum(measured) == 1:
+        k = int(np.argmax(measured))
+        u0, v0 = u[k], v[k]
+        return [np.array([u0, v0], dtype=np.float64) for _ in range(L)], n_imputed
+    idx = np.arange(L, dtype=np.float64)
+    idx_m = idx[measured]
+    u_m = u[measured]
+    v_m = v[measured]
+    u[:] = np.interp(idx, idx_m, u_m, left=float(u_m[0]), right=float(u_m[-1]))
+    v[:] = np.interp(idx, idx_m, v_m, left=float(v_m[0]), right=float(v_m[-1]))
+    return [np.array([u[i], v[i]], dtype=np.float64) for i in range(L)], n_imputed
+
+
+def read_video_frame_size(path):
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open video: {path}")
+    w = int(round(cap.get(cv2.CAP_PROP_FRAME_WIDTH)))
+    h = int(round(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+    cap.release()
+    if w <= 0 or h <= 0:
+        raise RuntimeError(f"Invalid frame size from {path}: {w}x{h}")
+    return w, h
+
+
+def run_pipeline(video_paths, P_list, dt, g, orig_sizes, pixel_sigma=1.0, physics_sigma=0.01, max_frames=None, omega_phys=1.0, interpolate_num_points=None):
     n_cameras = len(video_paths)
     if n_cameras < 2:
         raise ValueError("At least 2 cameras (videos) required.")
@@ -36,10 +75,12 @@ def run_pipeline(video_paths, P_list, dt, g, orig_sizes, pixel_sigma=1.0, physic
 
     positions_per_camera = []
     detected_per_camera = []
+    fps_per_camera = []
     for vp in video_paths:
-        pos_list, det_list, _, _ = extract_trajectory_from_video(vp, max_frames=max_frames)
+        pos_list, det_list, fps_i, _, _ = extract_trajectory_from_video(vp, max_frames=max_frames)
         positions_per_camera.append(pos_list)
         detected_per_camera.append(det_list)
+        fps_per_camera.append(float(fps_i))
 
     n_frames_per_cam = [len(pos_list) for pos_list in positions_per_camera]
     n_common = min(n_frames_per_cam)
@@ -48,32 +89,70 @@ def run_pipeline(video_paths, P_list, dt, g, orig_sizes, pixel_sigma=1.0, physic
         detected_per_camera = [det_list[-n_common:] for det_list in detected_per_camera]
         print(f"Trimmed to {n_common} frames (dropped first frames from longer videos).")
     n_frames_raw = n_common
+    start_per_cam = [n_frames_per_cam[i] - n_common for i in range(n_cameras)]
 
-    valid_t = [
-        t for t in range(n_frames_raw)
-        if all(positions_per_camera[i][t] is not None for i in range(n_cameras))
-    ]
     positions_all_frames = [list(positions_per_camera[i]) for i in range(n_cameras)]
     detected_all_frames = [list(detected_per_camera[i]) for i in range(n_cameras)]
-    positions_per_camera = [
-        [pos_list[t] for t in valid_t]
-        for pos_list in positions_per_camera
-    ]
-    n_frames = len(valid_t)
 
-    if n_frames < 3:
+    any_detection = np.zeros(n_frames_raw, dtype=bool)
+    for i in range(n_cameras):
+        for t in range(n_frames_raw):
+            if positions_per_camera[i][t] is not None:
+                any_detection[t] = True
+    hit = np.flatnonzero(any_detection)
+    if hit.size == 0:
+        raise ValueError("No detections in any camera after alignment.")
+    t_lo, t_hi = int(hit[0]), int(hit[-1])
+    n_window = t_hi - t_lo + 1
+    if n_window < 3:
         raise ValueError(
-            f"Need at least 3 frames with detections in all cameras. "
-            f"After removing frames with missing detections, got {n_frames} frames."
+            f"Need at least 3 frames spanning earliest..latest detection; got {n_window} (t={t_lo}..{t_hi})."
         )
 
-    if n_frames < n_frames_raw:
-        print(f"Dropped {n_frames_raw - n_frames} frames with missing detections; using {n_frames} frames.")
+    window_t = list(range(t_lo, t_hi + 1))
+    filled_per_camera = []
+    n_imputed = []
+    for i in range(n_cameras):
+        segment = [positions_per_camera[i][t] for t in window_t]
+        filled, n_fill = _fill_missing_uv_linear_even_frames(segment)
+        filled_per_camera.append(filled)
+        n_imputed.append(n_fill)
+    positions_per_camera = filled_per_camera
+    n_frames = n_window
+    print(
+        f"Linear fill (even frame spacing): window aligned indices {t_lo}..{t_hi} ({n_frames} frames); "
+        f"imputed (u,v) samples per camera: {n_imputed}"
+    )
+
+    dt_optimizer = float(dt)
+    frame_indices_from_interp = None
+    if interpolate_num_points is not None:
+        if n_cameras != 2:
+            raise ValueError("interpolate_num_points is only supported with exactly 2 cameras.")
+        m = int(interpolate_num_points)
+        if m < 3:
+            raise ValueError("interpolate_num_points must be >= 3.")
+        tr0 = np.asarray(positions_per_camera[0], dtype=np.float64)
+        tr1 = np.asarray(positions_per_camera[1], dtype=np.float64)
+        i0, i1, t_common = interpolate_at_same_time_intervals(tr0, tr1, m)
+        positions_per_camera = [[i0[k].copy() for k in range(m)], [i1[k].copy() for k in range(m)]]
+        n_frames = m
+        fps_ref = fps_per_camera[0] if fps_per_camera[0] > 1e-6 else (1.0 / max(dt, 1e-9))
+        t_span_s = (t_hi - t_lo) / fps_ref
+        dt_optimizer = t_span_s / max(1, m - 1)
+        frame_indices_from_interp = [
+            int(round(t_lo + float(t_common[s]) * (t_hi - t_lo)))
+            for s in range(m)
+        ]
+        print(
+            f"Spline interpolation: {m} common-time samples | "
+            f"optimizer dt={dt_optimizer:.6f} s (span {t_span_s:.4f} s over frames {t_lo}..{t_hi} at {fps_ref:.2f} fps)"
+        )
 
     pixels_for_draw = [[positions_per_camera[i][t] for t in range(n_frames)] for i in range(n_cameras)]
     pixels = []
 
-    print("This is pixels_for_draw: \n", pixels_for_draw)
+    #print("This is pixels_for_draw: \n", pixels_for_draw)
     for i in range(n_cameras):
         w_orig, h_orig = orig_sizes[i]
         scaled = []
@@ -85,16 +164,20 @@ def run_pipeline(video_paths, P_list, dt, g, orig_sizes, pixel_sigma=1.0, physic
             ], dtype=np.float64))
         pixels.append(scaled)
 
-    #print("Length of pixels: \n", len(pixels))
-    X_opt, cov, _ = optimize_trajectory(
-        P_list, pixels, dt=dt, g=np.asarray(g, dtype=np.float64), drag=0.0,
+    X_opt, cov, _drag_opt, _ls_result = optimize_trajectory(
+        P_list, pixels, dt=dt_optimizer, g=np.asarray(g, dtype=np.float64), drag=0.0,
         pixel_sigma=pixel_sigma, physics_sigma=physics_sigma, omega_phys=omega_phys,
     )
-    start_per_cam = [n_frames_per_cam[i] - n_common for i in range(n_cameras)]
-    frame_indices = [
-        [start_per_cam[i] + valid_t[t] for t in range(n_frames)]
-        for i in range(n_cameras)
-    ]
+    if frame_indices_from_interp is not None:
+        frame_indices = [
+            [start_per_cam[i] + frame_indices_from_interp[t] for t in range(n_frames)]
+            for i in range(n_cameras)
+        ]
+    else:
+        frame_indices = [
+            [start_per_cam[i] + window_t[t] for t in range(n_frames)]
+            for i in range(n_cameras)
+        ]
     frame_indices_all = [[start_per_cam[i] + t for t in range(n_frames_raw)] for i in range(n_cameras)]
     return X_opt, cov, frame_indices, pixels_for_draw, frame_indices_all, positions_all_frames, detected_all_frames, pixels
 
@@ -110,9 +193,11 @@ def plot_3d_trajectory(X_opt, cov=None, out_path="trajectory_3d.png"):
     fig = plt.figure(figsize=(10, 6))
     ax = fig.add_subplot(111, projection="3d")
 
-    mask = X_opt[:, 0] > -10000
-    X_plot = X_opt[mask]
-    frame_index = np.arange(n)[mask]
+    #mask = (X_opt[:, 0] < 10)
+    #X_plot = X_opt[mask]
+    X_plot = X_opt
+    #frame_index = np.arange(n)[mask]
+    frame_index = np.arange(n)
     sc = ax.scatter(X_plot[:, 0], X_plot[:, 1], X_plot[:, 2], c=frame_index, cmap="viridis", s=200, edgecolors="none")
     ax.plot(X_plot[:, 0], X_plot[:, 1], X_plot[:, 2], "k-", alpha=0.25, linewidth=1.5)
 
@@ -269,16 +354,17 @@ def main():
 
     start_time = time.perf_counter()
     video_paths = [
-        "sample_data/full_trim_cam1.mp4",
-        "sample_data/full_trim_cam2.mp4",
+        "Video_Camera_Processing/throws/Arushi_throw_0.mp4",
+        "Video_Camera_Processing/throws/Arushi_throw_1.mp4",
     ]
     P_list_path = "Video_Camera_Processing/P_list.npy"
-    dt = 1.0 / 60.0
+    dt = 1.0 / 30.0
     g = [0.0, 0.0, -9.81]
     pixel_sigma = 1.0
     physics_sigma = 0.1
     omega_phys = 0.0
     max_frames = None
+    interpolate_num_points = 30
     out_path = "trajectory_3d.png"
     side_by_side_dir = _PROJECT_ROOT / "sample_data" / "trajectory_side_by_side"
     video_paths = [Path(p) for p in video_paths]
@@ -291,7 +377,8 @@ def main():
         raise ValueError("P_list must have shape (n_cameras, 3, 4)")
     P_list = [P_list[i] for i in range(len(P_list))]
 
-    orig_sizes = [(1920, 1440), (3840, 2160)]
+    orig_sizes = [read_video_frame_size(p) for p in video_paths]
+    print(f"orig_sizes (width, height) from videos: {orig_sizes}")
 
     X_opt, cov, frame_indices, pixels, frame_indices_all, pixels_all_frames, detected_all_frames, pixels_for_camera = run_pipeline(
         [str(p) for p in video_paths],
@@ -303,9 +390,13 @@ def main():
         physics_sigma=physics_sigma,
         max_frames=max_frames,
         omega_phys=omega_phys,
+        interpolate_num_points=interpolate_num_points,
     )
 
-    print(f"Estimated 3D trajectory: {len(X_opt)} frames, dt={dt} s")
+    print(
+        f"Estimated 3D trajectory: {len(X_opt)} steps | video frame dt={dt:.6f} s | "
+        f"interpolate_num_points={interpolate_num_points!r}"
+    )
     print(f"  x range: [{X_opt[:, 0].min():.3f}, {X_opt[:, 0].max():.3f}] m")
     print(f"  y range: [{X_opt[:, 1].min():.3f}, {X_opt[:, 1].max():.3f}] m")
     print(f"  z range: [{X_opt[:, 2].min():.3f}, {X_opt[:, 2].max():.3f}] m")
