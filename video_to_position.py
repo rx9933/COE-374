@@ -17,7 +17,6 @@ sys.path.insert(0, str(_PROJECT_ROOT / "MathScripts"))
 
 from CVScripts.better_video_detection import (
     extract_trajectory_from_video,
-    interpolate_at_same_time_intervals,
     PROCESS_WIDTH,
     PROCESS_HEIGHT,
 )
@@ -26,30 +25,60 @@ from MathScripts.Physics_Triangulation_No_Camera_Conditioning import optimize_tr
 PROCESS_SIZE = (PROCESS_WIDTH, PROCESS_HEIGHT)
 
 
-def _fill_missing_uv_linear_even_frames(pos_list):
-    L = len(pos_list)
-    u = np.zeros(L, dtype=np.float64)
-    v = np.zeros(L, dtype=np.float64)
-    measured = np.zeros(L, dtype=bool)
-    for i, p in enumerate(pos_list):
+def interpolate_fcn(pos_list):
+    frames = []
+    uu = []
+    vv = []
+    for t, p in enumerate(pos_list):
         if p is not None:
-            u[i] = float(np.asarray(p, dtype=np.float64).ravel()[0])
-            v[i] = float(np.asarray(p, dtype=np.float64).ravel()[1])
-            measured[i] = True
-    if not np.any(measured):
-        raise ValueError("No detections in segment; cannot interpolate.")
-    n_imputed = int(L - np.sum(measured))
-    if np.sum(measured) == 1:
-        k = int(np.argmax(measured))
-        u0, v0 = u[k], v[k]
-        return [np.array([u0, v0], dtype=np.float64) for _ in range(L)], n_imputed
-    idx = np.arange(L, dtype=np.float64)
-    idx_m = idx[measured]
-    u_m = u[measured]
-    v_m = v[measured]
-    u[:] = np.interp(idx, idx_m, u_m, left=float(u_m[0]), right=float(u_m[-1]))
-    v[:] = np.interp(idx, idx_m, v_m, left=float(v_m[0]), right=float(v_m[-1]))
-    return [np.array([u[i], v[i]], dtype=np.float64) for i in range(L)], n_imputed
+            arr = np.asarray(p, dtype=np.float64).ravel()
+            frames.append(float(t))
+            uu.append(float(arr[0]))
+            vv.append(float(arr[1]))
+    if not frames:
+        return None, None, None
+    order = np.argsort(frames, kind="mergesort")
+    tf = np.asarray(frames, dtype=np.float64)[order]
+    u = np.asarray(uu, dtype=np.float64)[order]
+    v = np.asarray(vv, dtype=np.float64)[order]
+    return tf, u, v
+
+
+def uv_framificating(t_query, tf, u, v):
+    t_query = float(t_query)
+    if tf is None or len(tf) == 0:
+        raise ValueError("No detection knots; cannot define u(t), v(t).")
+    if len(tf) == 1:
+        return np.array([u[0], v[0]], dtype=np.float64)
+    if t_query <= tf[0]:
+        dt = tf[1] - tf[0]
+        if abs(dt) < 1e-12:
+            return np.array([u[0], v[0]], dtype=np.float64)
+        s = (t_query - tf[0]) / dt
+        return np.array([u[0] + s * (u[1] - u[0]), v[0] + s * (v[1] - v[0])], dtype=np.float64)
+    if t_query >= tf[-1]:
+        dt = tf[-1] - tf[-2]
+        if abs(dt) < 1e-12:
+            return np.array([u[-1], v[-1]], dtype=np.float64)
+        s = (t_query - tf[-1]) / dt
+        return np.array([u[-1] + s * (u[-1] - u[-2]), v[-1] + s * (v[-1] - v[-2])], dtype=np.float64)
+    uq = float(np.interp(np.array([t_query], dtype=np.float64), tf, u)[0])
+    vq = float(np.interp(np.array([t_query], dtype=np.float64), tf, v)[0])
+    return np.array([uq, vq], dtype=np.float64)
+
+
+def _track_uv_for_frame_range(full_pos_list, t_lo, t_hi):
+    tf, u, v = interpolate_fcn(full_pos_list)
+    if tf is None:
+        raise ValueError("Camera has no detections on the aligned timeline; cannot build u(t), v(t).")
+    out = []
+    n_imputed = 0
+    for t in range(t_lo, t_hi + 1):
+        had = full_pos_list[t] is not None
+        out.append(uv_framificating(t, tf, u, v))
+        if not had:
+            n_imputed += 1
+    return out, n_imputed
 
 
 def read_video_frame_size(path):
@@ -64,7 +93,7 @@ def read_video_frame_size(path):
     return w, h
 
 
-def run_pipeline(video_paths, P_list, dt, g, orig_sizes, pixel_sigma=1.0, physics_sigma=0.01, max_frames=None, omega_phys=1.0, interpolate_num_points=None):
+def run_pipeline(video_paths, P_list, dt, g, orig_sizes, pixel_sigma=1.0, physics_sigma=0.01, max_frames=None, omega_phys=1.0):
     n_cameras = len(video_paths)
     if n_cameras < 2:
         raise ValueError("At least 2 cameras (videos) required.")
@@ -113,41 +142,17 @@ def run_pipeline(video_paths, P_list, dt, g, orig_sizes, pixel_sigma=1.0, physic
     filled_per_camera = []
     n_imputed = []
     for i in range(n_cameras):
-        segment = [positions_per_camera[i][t] for t in window_t]
-        filled, n_fill = _fill_missing_uv_linear_even_frames(segment)
+        filled, n_fill = _track_uv_for_frame_range(positions_per_camera[i], t_lo, t_hi)
         filled_per_camera.append(filled)
         n_imputed.append(n_fill)
     positions_per_camera = filled_per_camera
     n_frames = n_window
     print(
-        f"Linear fill (even frame spacing): window aligned indices {t_lo}..{t_hi} ({n_frames} frames); "
-        f"imputed (u,v) samples per camera: {n_imputed}"
+        f"u,v from frame index: linear interp/extrap vs detection times | window {t_lo}..{t_hi} ({n_frames} frames); "
+        f"frames without raw detection (filled by f(t)) per camera: {n_imputed}"
     )
 
     dt_optimizer = float(dt)
-    frame_indices_from_interp = None
-    if interpolate_num_points is not None:
-        if n_cameras != 2:
-            raise ValueError("interpolate_num_points is only supported with exactly 2 cameras.")
-        m = int(interpolate_num_points)
-        if m < 3:
-            raise ValueError("interpolate_num_points must be >= 3.")
-        tr0 = np.asarray(positions_per_camera[0], dtype=np.float64)
-        tr1 = np.asarray(positions_per_camera[1], dtype=np.float64)
-        i0, i1, t_common = interpolate_at_same_time_intervals(tr0, tr1, m)
-        positions_per_camera = [[i0[k].copy() for k in range(m)], [i1[k].copy() for k in range(m)]]
-        n_frames = m
-        fps_ref = fps_per_camera[0] if fps_per_camera[0] > 1e-6 else (1.0 / max(dt, 1e-9))
-        t_span_s = (t_hi - t_lo) / fps_ref
-        dt_optimizer = t_span_s / max(1, m - 1)
-        frame_indices_from_interp = [
-            int(round(t_lo + float(t_common[s]) * (t_hi - t_lo)))
-            for s in range(m)
-        ]
-        print(
-            f"Spline interpolation: {m} common-time samples | "
-            f"optimizer dt={dt_optimizer:.6f} s (span {t_span_s:.4f} s over frames {t_lo}..{t_hi} at {fps_ref:.2f} fps)"
-        )
 
     pixels_for_draw = [[positions_per_camera[i][t] for t in range(n_frames)] for i in range(n_cameras)]
     pixels = []
@@ -168,16 +173,10 @@ def run_pipeline(video_paths, P_list, dt, g, orig_sizes, pixel_sigma=1.0, physic
         P_list, pixels, dt=dt_optimizer, g=np.asarray(g, dtype=np.float64), drag=0.0,
         pixel_sigma=pixel_sigma, physics_sigma=physics_sigma, omega_phys=omega_phys,
     )
-    if frame_indices_from_interp is not None:
-        frame_indices = [
-            [start_per_cam[i] + frame_indices_from_interp[t] for t in range(n_frames)]
-            for i in range(n_cameras)
-        ]
-    else:
-        frame_indices = [
-            [start_per_cam[i] + window_t[t] for t in range(n_frames)]
-            for i in range(n_cameras)
-        ]
+    frame_indices = [
+        [start_per_cam[i] + window_t[t] for t in range(n_frames)]
+        for i in range(n_cameras)
+    ]
     frame_indices_all = [[start_per_cam[i] + t for t in range(n_frames_raw)] for i in range(n_cameras)]
     return X_opt, cov, frame_indices, pixels_for_draw, frame_indices_all, positions_all_frames, detected_all_frames, pixels
 
@@ -362,9 +361,8 @@ def main():
     g = [0.0, 0.0, -9.81]
     pixel_sigma = 1.0
     physics_sigma = 0.1
-    omega_phys = 10000.0
+    omega_phys = 0.0 #10000.0
     max_frames = None
-    interpolate_num_points = 30
     out_path = "trajectory_3d.png"
     side_by_side_dir = _PROJECT_ROOT / "sample_data" / "trajectory_side_by_side"
     video_paths = [Path(p) for p in video_paths]
@@ -390,12 +388,10 @@ def main():
         physics_sigma=physics_sigma,
         max_frames=max_frames,
         omega_phys=omega_phys,
-        interpolate_num_points=interpolate_num_points,
     )
 
     print(
-        f"Estimated 3D trajectory: {len(X_opt)} steps | video frame dt={dt:.6f} s | "
-        f"interpolate_num_points={interpolate_num_points!r}"
+        f"Estimated 3D trajectory: {len(X_opt)} steps | optimizer dt={dt:.6f} s"
     )
     print(f"  x range: [{X_opt[:, 0].min():.3f}, {X_opt[:, 0].max():.3f}] m")
     print(f"  y range: [{X_opt[:, 1].min():.3f}, {X_opt[:, 1].max():.3f}] m")

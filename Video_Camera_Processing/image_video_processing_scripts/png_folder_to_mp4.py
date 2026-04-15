@@ -8,10 +8,10 @@ import sys
 import tempfile
 from typing import Optional
 
-camera_num = 0
-first_frame = 83
-last_frame = 138
-person = "Alex"
+camera_num = 1
+first_frame = 87
+last_frame = 110
+person = "Ari"
 FRAMES_FOLDER = f"Video_Camera_Processing/throws/{person}_throw_{camera_num}/png"
 OUTPUT_MP4 = f"Video_Camera_Processing/throws/{person}_throw_{camera_num}/mp4/{person}_throw_{camera_num}.mp4"
 FPS = 30.0

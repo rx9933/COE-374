@@ -7,7 +7,7 @@ import sys
 import cv2
 import numpy as np
 
-INPUT_FOLDER = "Video_Camera_Processing/throws/Gautam_throw_0"
+INPUT_FOLDER = "Video_Camera_Processing/throws/Luke_throw_1"
 OUTPUT_FOLDER = None
 WIDTH = 3840
 HEIGHT = 2160
