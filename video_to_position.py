@@ -192,11 +192,11 @@ def plot_3d_trajectory(X_opt, cov=None, out_path="trajectory_3d.png"):
     fig = plt.figure(figsize=(10, 6))
     ax = fig.add_subplot(111, projection="3d")
 
-    #mask = (X_opt[:, 0] < 10)
-    #X_plot = X_opt[mask]
-    X_plot = X_opt
-    #frame_index = np.arange(n)[mask]
-    frame_index = np.arange(n)
+    mask = (X_opt[:, 0] < 100)
+    X_plot = X_opt[mask]
+    #X_plot = X_opt
+    frame_index = np.arange(n)[mask]
+    #frame_index = np.arange(n)
     sc = ax.scatter(X_plot[:, 0], X_plot[:, 1], X_plot[:, 2], c=frame_index, cmap="viridis", s=200, edgecolors="none")
     ax.plot(X_plot[:, 0], X_plot[:, 1], X_plot[:, 2], "k-", alpha=0.25, linewidth=1.5)
 
@@ -353,8 +353,8 @@ def main():
 
     start_time = time.perf_counter()
     video_paths = [
-        "Video_Camera_Processing/throws/Arushi_throw_0.mp4",
-        "Video_Camera_Processing/throws/Arushi_throw_1.mp4",
+        "Video_Camera_Processing/throws/Rushil_throw_0.mp4",
+        "Video_Camera_Processing/throws/Rushil_throw_1.mp4",
     ]
     P_list_path = "Video_Camera_Processing/P_list.npy"
     dt = 1.0 / 30.0

@@ -8,13 +8,15 @@ import sys
 import tempfile
 from typing import Optional
 
-camera_num = 1
-first_frame = 87
-last_frame = 110
-person = "Ari"
-FRAMES_FOLDER = f"Video_Camera_Processing/throws/{person}_throw_{camera_num}/png"
-OUTPUT_MP4 = f"Video_Camera_Processing/throws/{person}_throw_{camera_num}/mp4/{person}_throw_{camera_num}.mp4"
-FPS = 30.0
+camera_num = 0
+first_frame = 402
+last_frame = 440
+#person = "Yash"
+#FRAMES_FOLDER = f"Video_Camera_Processing/throws/{person}_throw_{camera_num}/png"
+#OUTPUT_MP4 = f"Video_Camera_Processing/throws/{person}_throw_{camera_num}/mp4/{person}_throw_{camera_num}.mp4"
+FRAMES_FOLDER = "Video_Camera_Processing/throws/throw1/png"
+OUTPUT_MP4 = "Video_Camera_Processing/throws/throw1/throw1.mp4"
+FPS = 19.0 #CHANGE AS NEEDED
 PATTERN = "*.png"
 CRF = 23
 PIX_FMT = "yuv420p"

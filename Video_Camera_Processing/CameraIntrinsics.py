@@ -11,7 +11,7 @@ square_size = 0.015  # meters
 _IMAGE_GLOBS = ("*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG")
 
 
-def _collect_images(folder_path):
+def get_images(folder_path):
     folder_path = os.path.abspath(folder_path)
     paths = []
     for g in _IMAGE_GLOBS:
@@ -19,58 +19,41 @@ def _collect_images(folder_path):
     return sorted(set(os.path.abspath(p) for p in paths))
 
 
-def _rms_reprojection_pixels(objp, img_corners, rvec, tvec, K, dist):
-    """RMS distance in pixels between refined corners and projected model points for one view."""
+def find_checkerboard(objp, img_corners, rvec, tvec, K, dist):
     proj, _ = cv2.projectPoints(objp, rvec, tvec, K, dist)
     proj = proj.reshape(-1, 2).astype(np.float64)
     obs = img_corners.reshape(-1, 2).astype(np.float64)
     return float(np.sqrt(np.mean(np.sum((proj - obs) ** 2, axis=1))))
 
 
-def _per_view_errors_sorted_worst_first(objpoints, imgpoints, ok_paths, K, dist, rvecs, tvecs):
+def determine_error(objpoints, imgpoints, ok_paths, K, dist, rvecs, tvecs):
     rows = []
     for i, path in enumerate(ok_paths):
-        rms = _rms_reprojection_pixels(objpoints[i], imgpoints[i], rvecs[i], tvecs[i], K, dist)
+        rms = find_checkerboard(objpoints[i], imgpoints[i], rvecs[i], tvecs[i], K, dist)
         rows.append((rms, path))
     rows.sort(key=lambda x: -x[0])
     return rows
 
 
-def _print_and_save_per_view_report(folder_path, sorted_worst_first, write_file=True):
+def print_report(intrinsics_cases):
     print("  Per-image RMS reprojection (pixels), worst → best (review top rows for blur / glare / bad corners):")
-    for rank, (rms, path) in enumerate(sorted_worst_first, start=1):
+    for rank, (rms, path) in enumerate(intrinsics_cases, start=1):
         print("    %3d  rms=%7.4f px  %s" % (rank, rms, path))
-    if len(sorted_worst_first) >= 3:
-        errs = [r for r, _ in sorted_worst_first]
+    if len(intrinsics_cases) >= 3:
+        errs = [r for r, _ in intrinsics_cases]
         med = float(np.median(errs))
         worst = errs[0]
         print("    (median rms=%.4f px, worst=%.4f px)" % (med, worst))
-    if write_file:
-        report_path = os.path.join(folder_path, "per_view_reprojection_rms.txt")
-        with open(report_path, "w") as f:
-            f.write("# rank 1 = worst. RMS reprojection error in pixels after full calibrateCamera.\n")
-            f.write("# columns: rank\trms_px\tpath\n")
-            for rank, (rms, path) in enumerate(sorted_worst_first, start=1):
-                f.write("%d\t%.6f\t%s\n" % (rank, rms, path))
-        print("  Wrote %s" % report_path)
 
 
-def calibrate_camera_from_folder(
-    folder_path,
-    checkerboard=CHECKERBOARD,
-    square_size_m=square_size,
-    write_per_view_report=True,
-):
+def camera_calibrate(folder_path, checkerboard=CHECKERBOARD, square_size_m=square_size):
     folder_path = os.path.abspath(folder_path)
     if not os.path.isdir(folder_path):
         raise FileNotFoundError("Calibration folder does not exist: %s" % folder_path)
 
-    images = _collect_images(folder_path)
+    images = get_images(folder_path)
     if not images:
-        raise RuntimeError(
-            "No images found in %s (tried %s). Add calibration photos or fix the path."
-            % (folder_path, ", ".join(_IMAGE_GLOBS))
-        )
+        raise RuntimeError("No images found in %s (tried %s). Add calibration photos or fix the path." % (folder_path, ", ".join(_IMAGE_GLOBS)))
 
     objp = np.zeros((checkerboard[0] * checkerboard[1], 3), np.float32)
     objp[:, :2] = np.mgrid[0 : checkerboard[0], 0 : checkerboard[1]].T.reshape(-1, 2)
@@ -110,30 +93,20 @@ def calibrate_camera_from_folder(
             print("      %s" % reason)
 
     if n_ok == 0:
-        raise RuntimeError(
-            "calibrateCamera needs at least one valid view; got 0 in %s. "
-            "Checkerboard inner corners expected: %s (cols x rows of inner corners). "
-            "See failed list above."
-            % (folder_path, checkerboard)
-        )
+        raise RuntimeError("calibrateCamera needs at least one valid view; got 0 in %s. " "Checkerboard inner corners expected: %s (cols x rows of inner corners). " % (folder_path, checkerboard))
     if gray_shape is None:
         raise RuntimeError("Internal error: gray_shape unset despite n_ok > 0")
 
     ret, K, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, gray_shape, None, None)
 
     print("  Overall calibrateCamera RMS reprojection: %.4f px" % ret)
-    ranked = _per_view_errors_sorted_worst_first(objpoints, imgpoints, ok_paths, K, dist, rvecs, tvecs)
-    _print_and_save_per_view_report(folder_path, ranked, write_file=write_per_view_report)
+    ranked = determine_error(objpoints, imgpoints, ok_paths, K, dist, rvecs, tvecs)
+    print_report(ranked)
 
     if ret > 1.0:
-        warnings.warn(
-            f"Reprojection error is high ({ret:.4f} px): consider more poses, better focus, or removing outlier views. "
-            "Calibration is still saved.",
-            UserWarning,
-            stacklevel=2,
-        )
+        warnings.warn(f"Reprojection error is high ({ret:.4f} px)")
 
-    return K, dist, ranked
+    return K, dist
 
 
 def calibrate_cameras_and_save(calibration_folders, output_dir=".", K_list_filename="K_list.npy", dist_list_filename="dist_list.npy", checkerboard=CHECKERBOARD, square_size_m=square_size):
@@ -145,19 +118,17 @@ def calibrate_cameras_and_save(calibration_folders, output_dir=".", K_list_filen
 
     for i, folder in enumerate(calibration_folders):
         print(f"Calibrating camera {i} from folder: {folder}")
-        K, dist, _ranked = calibrate_camera_from_folder(
-            folder, checkerboard=checkerboard, square_size_m=square_size_m
-        )
+        K, dist, _ = camera_calibrate(folder, checkerboard=checkerboard, square_size_m=square_size_m)
         K_list.append(K)
         dist_list.append(dist)
 
     K_list_path = os.path.join(output_dir, K_list_filename)
     dist_list_path = os.path.join(output_dir, dist_list_filename)
 
-    print("K_list (before save):")
+    print("K_list:")
     for i, K in enumerate(K_list):
         print("  camera %d:\n%s" % (i, np.asarray(K)))
-    print("dist_list (before save):")
+    print("dist_list:")
     for i, dist in enumerate(dist_list):
         print("  camera %d:\n%s" % (i, np.asarray(dist).ravel()))
 

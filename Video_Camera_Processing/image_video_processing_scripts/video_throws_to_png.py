@@ -18,10 +18,10 @@ import cv2
 
 # Default: two camera videos under throws → sibling folders filtered_cam_0 / filtered_cam_1
 THROWS_DIR = "Video_Camera_Processing/throws"
-VIDEO_CAM0 = os.path.join(THROWS_DIR, "Arushi_throw_0.mp4")
-VIDEO_CAM1 = os.path.join(THROWS_DIR, "Arushi_throw_1.mp4")
-OUT_CAM0_DIR = os.path.join(THROWS_DIR, "filtered_cam_0")
-OUT_CAM1_DIR = os.path.join(THROWS_DIR, "filtered_cam_1")
+VIDEO_CAM0 = os.path.join(THROWS_DIR, "roi_priority.mp4")
+VIDEO_CAM1 = os.path.join(THROWS_DIR, "roi_priority (1).mp4")
+OUT_CAM0_DIR = os.path.join(THROWS_DIR, "delete_later_0")
+OUT_CAM1_DIR = os.path.join(THROWS_DIR, "delete_later_1")
 
 FRAME_NAME_FMT = "frame_%06d.png"
 START_INDEX = 0

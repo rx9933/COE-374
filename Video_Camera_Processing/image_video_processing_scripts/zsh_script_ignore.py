@@ -30,8 +30,8 @@ def organize_by_extension(directory):
         # Move file
         shutil.move(file_path, os.path.join(target_folder, filename))
 
-    print("Files organized successfully!")
+    print("Files organized successfully")
 
 if __name__ == "__main__":
-    path = "Video_Camera_Processing/throws/Luke_throw_1"
+    path = "Video_Camera_Processing/throws/throw0"
     organize_by_extension(path)

@@ -1,0 +1,10 @@
+{
+  "camera_id": "Lucid Vision Labs-ATP124S-M-224300917",
+  "frame_index": 0,
+  "width": 4096,
+  "height": 3000,
+  "payload_bytes": 12288000,
+  "system_timestamp_ns": 1776666279330425000,
+  "buffer_timestamp_ns": 2433961547848,
+  "frame_id": 1
+}
