@@ -15,7 +15,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 sys.path.insert(0, str(_PROJECT_ROOT / "MathScripts"))
 
-from CVScripts.better_video_detection import (
+from CVScripts.tuned_cv1k import (
     extract_trajectory_from_video,
     PROCESS_WIDTH,
     PROCESS_HEIGHT,
@@ -353,11 +353,11 @@ def main():
 
     start_time = time.perf_counter()
     video_paths = [
-        "Video_Camera_Processing/throws/Rushil_throw_0.mp4",
-        "Video_Camera_Processing/throws/Rushil_throw_1.mp4",
+        "Video_Camera_Processing/throws/throw0.mp4",
+        "Video_Camera_Processing/throws/throw1.mp4",
     ]
     P_list_path = "Video_Camera_Processing/P_list.npy"
-    dt = 1.0 / 30.0
+    dt = 1.0 / 19.0
     g = [0.0, 0.0, -9.81]
     pixel_sigma = 1.0
     physics_sigma = 0.1

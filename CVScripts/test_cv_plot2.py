@@ -3,9 +3,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from scipy.interpolate import CubicSpline
-from tuned_cv import extract_trajectory_from_video
+from tuned_cv1k import extract_trajectory_from_video
 
-
+plt.rcParams['font.size'] = 18
 def _natural_cubic_spline_second_derivatives(t, y):
     n = len(t)
     if n < 3:
@@ -126,6 +126,10 @@ def plot_two_throws_with_common_interpolation(video_path1: str, video_path2: str
     tracked1 = np.asarray(trail1, dtype=float)
     tracked2 = np.asarray(trail2, dtype=float)
 
+    t1_trail = np.arange(len(trail1)) * 1/fps1
+    t2_trail = np.arange(len(trail2)) * 1/fps2
+
+
     if tracked1.size == 0 or tracked2.size == 0:
         print("One of the throws has no trajectory data.")
         return
@@ -158,8 +162,8 @@ def plot_two_throws_with_common_interpolation(video_path1: str, video_path2: str
     spline1_full = _fit_cubic_spline(tracked1, num_samples=200)
     spline2_full = _fit_cubic_spline(tracked2, num_samples=200)
     
-    ax1.plot(spline1_full[:, 0], spline1_full[:, 1], 'r-', linewidth=2.5, alpha=0.7, label='Throw 1 trajectory')
-    ax1.plot(spline2_full[:, 0], spline2_full[:, 1], 'b-', linewidth=2.5, alpha=0.7, label='Throw 2 trajectory')
+    # ax1.plot(spline1_full[:, 0], spline1_full[:, 1], 'r-', linewidth=2.5, alpha=0.7, label='Throw 1 trajectory')
+    # ax1.plot(spline2_full[:, 0], spline2_full[:, 1], 'b-', linewidth=2.5, alpha=0.7, label='Throw 2 trajectory')
     
     # Plot original tracked points
     ax1.scatter(tracked1[detected1, 0], tracked1[detected1, 1], 
@@ -169,41 +173,41 @@ def plot_two_throws_with_common_interpolation(video_path1: str, video_path2: str
     
     # Plot interpolated points at common times
     # Color by normalized time (t_common)
-    scatter1 = ax1.scatter(interp1[:, 0], interp1[:, 1], 
-                          c=t_common, cmap='RdYlGn', s=60, 
-                          marker='o', edgecolors='black', linewidth=1.5,
-                          label='Throw 1 interpolated', vmin=0, vmax=1)
-    scatter2 = ax1.scatter(interp2[:, 0], interp2[:, 1], 
-                          c=t_common, cmap='RdYlGn', s=60, 
-                          marker='s', edgecolors='black', linewidth=1.5,
-                          label='Throw 2 interpolated', vmin=0, vmax=1)
+    # scatter1 = ax1.scatter(interp1[:, 0], interp1[:, 1], 
+    #                       c=t_common, cmap='RdYlGn', s=60, 
+    #                       marker='o', edgecolors='black', linewidth=1.5,
+    #                       label='Throw 1 interpolated', vmin=0, vmax=1)
+    # scatter2 = ax1.scatter(interp2[:, 0], interp2[:, 1], 
+    #                       c=t_common, cmap='RdYlGn', s=60, 
+                        #   marker='s', edgecolors='black', linewidth=1.5,
+                        #   label='Throw 2 interpolated', vmin=0, vmax=1)
     
     # Connect corresponding points with lines
-    for i in range(0, len(interp1), max(1, num_interp_points // 20)):  # Show every Nth line to avoid clutter
-        ax1.plot([interp1[i, 0], interp2[i, 0]], 
-                [interp1[i, 1], interp2[i, 1]], 
-                'gray', linestyle='--', alpha=0.3, linewidth=0.8)
+    # for i in range(0, len(interp1), max(1, num_interp_points // 20)):  # Show every Nth line to avoid clutter
+    #     ax1.plot([interp1[i, 0], interp2[i, 0]], 
+    #             [interp1[i, 1], interp2[i, 1]], 
+    #             'gray', linestyle='--', alpha=0.3, linewidth=0.8)
     
     # Mark start and end points
     ax1.scatter(tracked1[0, 0], tracked1[0, 1], c='darkred', s=200, 
-               marker='*', label='Throw 1 start', zorder=5, edgecolors='black', linewidth=2)
+               marker='*', zorder=5, edgecolors='black', linewidth=2)
     ax1.scatter(tracked1[-1, 0], tracked1[-1, 1], c='red', s=200, 
-               marker='*', label='Throw 1 end', zorder=5, edgecolors='black', linewidth=2)
+               marker='*', zorder=5, edgecolors='black', linewidth=2)
     ax1.scatter(tracked2[0, 0], tracked2[0, 1], c='darkblue', s=200, 
-               marker='*', label='Throw 2 start', zorder=5, edgecolors='black', linewidth=2)
+               marker='*',zorder=5, edgecolors='black', linewidth=2)
     ax1.scatter(tracked2[-1, 0], tracked2[-1, 1], c='blue', s=200, 
-               marker='*', label='Throw 2 end', zorder=5, edgecolors='black', linewidth=2)
+               marker='*', zorder=5, edgecolors='black', linewidth=2)
     
-    ax1.set_xlabel('X (pixels)', fontsize=12)
-    ax1.set_ylabel('Y (pixels)', fontsize=12)
-    ax1.set_title('Throw Comparison with Common-Time Interpolation', fontsize=14)
+    ax1.set_xlabel('X (pixels)', fontsize=20)
+    ax1.set_ylabel('Y (pixels)', fontsize=20)
+    ax1.set_title('Throw Comparison from Different Cameras', fontsize=24)
     ax1.invert_yaxis()
     ax1.grid(True, alpha=0.3)
-    ax1.legend(loc='best', fontsize=9)
+    ax1.legend(loc='lower left', fontsize=16)
     
     # Add colorbar for normalized time
-    cbar = plt.colorbar(scatter1, ax=ax1)
-    cbar.set_label('Normalized Time (0=start, 1=end)', fontsize=10)
+    # cbar = plt.colorbar(scatter1, ax=ax1)
+    # cbar.set_label('Normalized Time (0=start, 1=end)', fontsize=10)
    
     
     # Add statistics
@@ -249,11 +253,11 @@ def plot_two_throws_with_common_interpolation(video_path1: str, video_path2: str
                 else:
                     table[(i, j)].set_facecolor('#f5f5f5')
     
-    ax2.set_title('Trajectory Statistics', fontsize=12, pad=20)
+    ax2.set_title('Trajectory Statistics', fontsize=20, pad=20)
     
     plt.suptitle(f'Throw Comparison with {num_interp_points} Common-Time Interpolation Points\n'
                 f'Line connecting corresponding time points | Color indicates normalized time',
-                fontsize=14, fontweight='bold')
+                fontsize=24, fontweight='bold')
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
@@ -267,17 +271,137 @@ def plot_two_throws_with_common_interpolation(video_path1: str, video_path2: str
     print(f"Final separation distance: {final_distance:.2f} pixels")
     print(f"Comparison plot saved to: {output_path}")
     
-    return interp1, interp2, t_common, distances
+    return interp1, interp2, t_common, distances, t1_trail, t2_trail, trail1, trail2
+def find_throw_start_stable(acc_s, threshold=1e4, window=15, spike_tol=3e4):
+    """
+    Detect first stable low-acceleration region.
 
+    Conditions:
+    - acceleration stays below threshold for `window` frames
+    - no large spikes after start (sanity check)
+    """
+
+    acc_s = np.asarray(acc_s)
+
+    below = acc_s < threshold
+
+    for i in range(len(acc_s) - window):
+        segment = acc_s[i:i + window]
+
+        # must be consistently low
+        if np.all(segment < threshold):
+            
+            # check for spikes AFTER candidate start
+            post = acc_s[i:]
+
+            if np.max(post) < spike_tol:
+                return i
+
+    return None
+
+def smooth(signal, k=5):
+    kernel = np.ones(k) / k
+    return np.convolve(signal, kernel, mode='same')
+
+def find_constant_accel_region(acc_mag, tol, window=5):
+    dacc = np.abs(np.diff(acc_mag))
+    
+    for i in range(len(dacc) - window):
+        segment = dacc[i:i+window]
+        if np.all(segment < tol):
+            return i  # start index of constant region
+    return None
+
+def a(x, t):
+    x = np.asarray(x, dtype=float)
+    t = np.asarray(t, dtype=float)
+
+    a_out = []
+
+    for i in range(1, len(x) - 1):
+        dt1 = t[i] - t[i-1]
+        dt2 = t[i+1] - t[i]
+
+        if dt1 == 0 or dt2 == 0:
+            a_out.append(np.array([np.nan, np.nan]))
+            continue
+
+        v1 = (x[i] - x[i-1]) / dt1
+        v2 = (x[i+1] - x[i]) / dt2
+
+        ai = 2 * (v2 - v1) / (dt1 + dt2)
+        a_out.append(ai)
+
+    return np.array(a_out)
+
+def calculate_throw_start(x1, x2, t1, t2, tol=1e2):
+    x1 = np.asarray(x1)
+    x2 = np.asarray(x2)
+
+    a1 = a(x1, t1)
+    a2 = a(x2, t2)
+
+    a1_mag = np.linalg.norm(a1, axis=1)
+    a2_mag = np.linalg.norm(a2, axis=1)
+
+    a1_s = smooth(a1_mag, k=7)
+    a2_s = smooth(a2_mag, k=7)
+    plt.figure(figsize=(10, 6))
+    plt.plot(a1_mag, label='|a| (raw)', linestyle='--', alpha=0.7)
+    plt.plot(a1_s, label='|a| (smooth)', linestyle='--', alpha=0.7)
+    plt.legend() 
+    plt.yscale('log') 
+    plt.title("Acceleration Analysis (Throw 1)") 
+    plt.xlabel("Frame Index") 
+    plt.ylabel("Acceleration (pixels/s²)") 
+    plt.grid(True)
+    plt.savefig('a1.png')
+    plt.show()
+ 
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(a2_mag, label='|a| (raw)', linestyle='--', alpha=0.7)
+    plt.plot(a2_s, label='|a| (smooth)', linestyle='--', alpha=0.7)
+    plt.legend() 
+    plt.yscale('log') 
+    plt.title("Acceleration Analysis (Throw 2)") 
+    plt.xlabel("Frame Index") 
+    plt.ylabel("Acceleration (pixels/s²)") 
+    plt.grid(True)
+    plt.savefig('a2.png')
+    plt.show()
+
+
+    idx1 = find_constant_accel_region(a1_s, tol)
+    idx2 = find_constant_accel_region(a2_s, tol)
+
+    def map_idx(idx, t):
+        return (idx + 1, t[idx + 1]) if idx is not None else (None, None)
+
+    # treat first and second occurrence as start/end (simple heuristic)
+    def first_two_below(acc_s, threshold=tol):
+        hits = np.where(acc_s < threshold)[0]
+        if len(hits) < 2:
+            return None, None
+        return hits[0], hits[1]
+
+    # s1, e1 = first_two_below(a1_s)
+    # s2, e2 = first_two_below(a2_s)
+    s1 = find_throw_start_stable(a1_s)
+    s2 = find_throw_start_stable(a2_s)
+    return s1,s2 #(s1, e1), (s2, e2)
+    
 
 # Example usage
 if __name__ == "__main__":
-    throw0 = "Video_Camera_Processing/throws/Arushi_throw_0.mp4"
-    throw1 = "Video_Camera_Processing/throws/Arushi_throw_1.mp4"
+    throw0 = "Video_Camera_Processing/throws/throw0_new.mp4"
+    throw1 = "Video_Camera_Processing/throws/throw1_new.mp4"
     
     # Plot with common interpolation points
-    interp1, interp2, t_common, distances = plot_two_throws_with_common_interpolation(
+    interp1, interp2, t_common, distances, t1, t2, trail1, trail2 = plot_two_throws_with_common_interpolation(
         throw0, throw1, 
         output_path="throw_comparison_interpolated.png",
-        num_interp_points=100
+        num_interp_points=1
     )
+
+    

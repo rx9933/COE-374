@@ -4,7 +4,7 @@ from pathlib import Path
 
 CAMERA_ID = 0
 
-IMG_PATH = Path(__file__).resolve().parent / "extrinsics_calibration" / "extrinsics_1.png"
+IMG_PATH = Path(__file__).resolve().parent / "extrinsics_calibration" / "extrinsics_0.png"
 K_LIST_PATH = Path(__file__).resolve().parent / "K_list.npy"
 DIST_LIST_PATH = Path(__file__).resolve().parent / "dist_list.npy"
 
@@ -12,6 +12,7 @@ DICT_ID = cv2.aruco.DICT_4X4_50
 board_size = (4, 3)
 sq_length = 0.06
 marker_len = 0.045
+USE_CROPPING = False
 
 board_pos = [
     np.array([2.0, 0.0, 0.0], dtype=np.float64),
@@ -51,15 +52,23 @@ def main():
 
     object_points = []
     image_points = []
+    gray_full = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
     for board_id in range(len(board_pos)):
 
-        roi = board_uv_crop[board_id]
         world_pos = board_pos[board_id]
-
-        x0, y0, x1, y1 = roi
-        crop = image[y0:y1, x0:x1]
-        img = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        if USE_CROPPING:
+            x0, y0, x1, y1 = board_uv_crop[board_id]
+            crop = image[y0:y1, x0:x1]
+            img = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+            K_img = K_full.copy()
+            K_img[0, 2] -= x0
+            K_img[1, 2] -= y0
+            origin_offset = np.array([float(x0), float(y0)], dtype=np.float64)
+        else:
+            img = gray_full
+            K_img = K_full
+            origin_offset = np.array([0.0, 0.0], dtype=np.float64)
 
         corners, ids, _ = cv2.aruco.detectMarkers(img, dictionary)
         if ids is None:
@@ -79,11 +88,8 @@ def main():
         ids = ids[keep_mask].reshape(-1, 1)
         print(f"Board {board_id}: detected={ids_flat.tolist()} ")
 
-        K_crop = K_full.copy()
-        K_crop[0, 2] -= x0
-        K_crop[1, 2] -= y0
         board = make_charuco_board(board_size, sq_length, marker_len, dictionary, id_min, id_max)
-        retval, charuco_corners, charuco_ids = cv2.aruco.interpolateCornersCharuco(corners, ids, img, board, cameraMatrix=K_crop, distCoeffs=dist)
+        retval, charuco_corners, charuco_ids = cv2.aruco.interpolateCornersCharuco(corners, ids, img, board, cameraMatrix=K_img, distCoeffs=dist)
 
         print(f"Board {board_id}: charuco_corners={charuco_corners}")
 
@@ -91,16 +97,16 @@ def main():
             print(f"[warn] Not enough Charuco corners for board {board_id}\n")
             continue
 
-        success, rvec, tvec = cv2.aruco.estimatePoseCharucoBoard(charuco_corners, charuco_ids, board, K_crop, dist, None, None)
+        success, rvec, tvec = cv2.aruco.estimatePoseCharucoBoard(charuco_corners, charuco_ids, board, K_img, dist, None, None)
 
         if not success:
             print(f"[warn] Pose failed for board {board_id}\n")
             continue
 
         gcp_origin = np.array([[0, 0, 0]], dtype=np.float64)
-        origin_crop, _ = cv2.projectPoints(gcp_origin, rvec, tvec, K_crop, dist)
+        origin_crop, _ = cv2.projectPoints(gcp_origin, rvec, tvec, K_img, dist)
         origin_crop = origin_crop.reshape(2)
-        origin_full = origin_crop + np.array([float(x0), float(y0)], dtype=np.float64)
+        origin_full = origin_crop + origin_offset
 
         object_points.append(world_pos)
         image_points.append(origin_full)
