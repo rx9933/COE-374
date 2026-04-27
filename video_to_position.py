@@ -10,6 +10,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import time
+from scipy.interpolate import CubicSpline
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_PROJECT_ROOT))
@@ -24,6 +25,8 @@ from MathScripts.Physics_Triangulation_No_Camera_Conditioning import optimize_tr
 
 PROCESS_SIZE = (PROCESS_WIDTH, PROCESS_HEIGHT)
 
+#"linear" or "cubic"
+interp_type = "cubic"
 
 def interpolate_fcn(pos_list):
     frames = []
@@ -41,14 +44,24 @@ def interpolate_fcn(pos_list):
     tf = np.asarray(frames, dtype=np.float64)[order]
     u = np.asarray(uu, dtype=np.float64)[order]
     v = np.asarray(vv, dtype=np.float64)[order]
+    if tf.size >= 2:
+        uniq_tf, inv = np.unique(tf, return_inverse=True)
+        if uniq_tf.size != tf.size:
+            sum_u = np.bincount(inv, weights=u)
+            sum_v = np.bincount(inv, weights=v)
+            cnt = np.bincount(inv)
+            tf = uniq_tf.astype(np.float64)
+            u = (sum_u / np.maximum(cnt, 1)).astype(np.float64)
+            v = (sum_v / np.maximum(cnt, 1)).astype(np.float64)
     return tf, u, v
 
 
-def uv_framificating(t_query, tf, u, v):
+def linear_interpolator(t_query, tf, u, v):
     t_query = float(t_query)
-    if tf is None or len(tf) == 0:
-        raise ValueError("No detection knots; cannot define u(t), v(t).")
-    if len(tf) == 1:
+    tf = np.asarray(tf, dtype=np.float64)
+    u = np.asarray(u, dtype=np.float64)
+    v = np.asarray(v, dtype=np.float64)
+    if tf.size == 1:
         return np.array([u[0], v[0]], dtype=np.float64)
     if t_query <= tf[0]:
         dt = tf[1] - tf[0]
@@ -62,12 +75,36 @@ def uv_framificating(t_query, tf, u, v):
             return np.array([u[-1], v[-1]], dtype=np.float64)
         s = (t_query - tf[-1]) / dt
         return np.array([u[-1] + s * (u[-1] - u[-2]), v[-1] + s * (v[-1] - v[-2])], dtype=np.float64)
-    uq = float(np.interp(np.array([t_query], dtype=np.float64), tf, u)[0])
-    vq = float(np.interp(np.array([t_query], dtype=np.float64), tf, v)[0])
+    uq = float(np.interp(t_query, tf, u))
+    vq = float(np.interp(t_query, tf, v))
     return np.array([uq, vq], dtype=np.float64)
 
 
-def _track_uv_for_frame_range(full_pos_list, t_lo, t_hi):
+def cubic_interpolator(t_query, tf, u, v):
+    t_query = float(t_query)
+    if tf is None or len(tf) == 0:
+        raise ValueError("No detection knots")
+    tf = np.asarray(tf, dtype=np.float64)
+    u = np.asarray(u, dtype=np.float64)
+    v = np.asarray(v, dtype=np.float64)
+    n = tf.size
+    if n == 1:
+        return np.array([u[0], v[0]], dtype=np.float64)
+    if n == 2:
+        return linear_interpolator(t_query, tf, u, v)
+    spl_u = CubicSpline(tf, u, bc_type="natural", extrapolate=True)
+    spl_v = CubicSpline(tf, v, bc_type="natural", extrapolate=True)
+    return np.array([float(spl_u(t_query)), float(spl_v(t_query))], dtype=np.float64)
+
+
+def uv_eval_at_frame(t_query, tf, u, v):
+    mode = interp_type
+    if mode == "linear":
+        return linear_interpolator(t_query, tf, u, v)
+    return cubic_interpolator(t_query, tf, u, v)
+
+
+def track_uv(full_pos_list, t_lo, t_hi):
     tf, u, v = interpolate_fcn(full_pos_list)
     if tf is None:
         raise ValueError("Camera has no detections on the aligned timeline; cannot build u(t), v(t).")
@@ -75,7 +112,7 @@ def _track_uv_for_frame_range(full_pos_list, t_lo, t_hi):
     n_imputed = 0
     for t in range(t_lo, t_hi + 1):
         had = full_pos_list[t] is not None
-        out.append(uv_framificating(t, tf, u, v))
+        out.append(uv_eval_at_frame(t, tf, u, v))
         if not had:
             n_imputed += 1
     return out, n_imputed
@@ -142,13 +179,13 @@ def run_pipeline(video_paths, P_list, dt, g, orig_sizes, pixel_sigma=1.0, physic
     filled_per_camera = []
     n_imputed = []
     for i in range(n_cameras):
-        filled, n_fill = _track_uv_for_frame_range(positions_per_camera[i], t_lo, t_hi)
+        filled, n_fill = track_uv(positions_per_camera[i], t_lo, t_hi)
         filled_per_camera.append(filled)
         n_imputed.append(n_fill)
     positions_per_camera = filled_per_camera
     n_frames = n_window
     print(
-        f"u,v from frame index: linear interp/extrap vs detection times | window {t_lo}..{t_hi} ({n_frames} frames); "
+        f"u,v from frame index: cubic interpolation vs detection times | window {t_lo}..{t_hi} ({n_frames} frames); "
         f"frames without raw detection (filled by f(t)) per camera: {n_imputed}"
     )
 
@@ -178,7 +215,7 @@ def run_pipeline(video_paths, P_list, dt, g, orig_sizes, pixel_sigma=1.0, physic
         for i in range(n_cameras)
     ]
     frame_indices_all = [[start_per_cam[i] + t for t in range(n_frames_raw)] for i in range(n_cameras)]
-    return X_opt, cov, frame_indices, pixels_for_draw, frame_indices_all, positions_all_frames, detected_all_frames, pixels
+    return (X_opt, cov, frame_indices, pixels_for_draw, frame_indices_all, positions_all_frames, detected_all_frames, pixels, t_lo, t_hi,)
 
 
 def plot_3d_trajectory(X_opt, cov=None, out_path="trajectory_3d.png"):
@@ -226,6 +263,86 @@ def plot_3d_trajectory(X_opt, cov=None, out_path="trajectory_3d.png"):
     plt.savefig(out_path, dpi=120)
     print(f"Saved: {out_path}")
     plt.show()
+
+def plot_2d_raw_vs_interpolated(
+    interp_pixels_full_res,
+    positions_all_frames_cam,
+    t_lo,
+    t_hi,
+    dimensions,
+    out_path,
+    cam_index,
+):
+    """Side-by-side: raw detections only vs filled u(t),v(t) used by the optimizer (both in full-image pixels)."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("Install matplotlib to plot: pip install matplotlib")
+        return
+
+    w_orig, h_orig = int(dimensions[0]), int(dimensions[1])
+    n = t_hi - t_lo + 1
+    interp_arr = np.asarray(interp_pixels_full_res, dtype=np.float64).reshape(-1, 2)
+    if interp_arr.shape[0] != n:
+        raise ValueError(
+            f"Cam {cam_index}: interp length {interp_arr.shape[0]} != window size {n} (t_lo..t_hi)."
+        )
+
+    raw_arr = np.full((n, 2), np.nan, dtype=np.float64)
+    for k in range(n):
+        p = positions_all_frames_cam[t_lo + k]
+        if p is not None:
+            arr = np.asarray(p, dtype=np.float64).ravel()
+            raw_arr[k, 0] = arr[0] * w_orig / float(PROCESS_WIDTH)
+            raw_arr[k, 1] = arr[1] * h_orig / float(PROCESS_HEIGHT)
+
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(14, 6))
+    frame_idx = np.arange(t_lo, t_hi + 1, dtype=np.float64)
+
+    mask = np.isfinite(raw_arr[:, 0]) & np.isfinite(raw_arr[:, 1])
+    if np.any(mask):
+        sc0 = ax0.scatter(
+            raw_arr[mask, 0],
+            raw_arr[mask, 1],
+            c=frame_idx[mask],
+            cmap="viridis",
+            s=50,
+            edgecolors="none",
+        )
+        ax0.plot(raw_arr[mask, 0], raw_arr[mask, 1], "k-", alpha=0.35, linewidth=1.2)
+        fig.colorbar(sc0, ax=ax0, shrink=0.75, label="Frame index")
+    ax0.set_title(f"Cam {cam_index}: raw detections (no interpolation)")
+    ax0.set_xlabel("u (pixels)", fontsize=14)
+    ax0.set_ylabel("v (pixels)", fontsize=14)
+
+    sc1 = ax1.scatter(
+        interp_arr[:, 0],
+        interp_arr[:, 1],
+        c=frame_idx,
+        cmap="viridis",
+        s=50,
+        edgecolors="none",
+    )
+    ax1.plot(interp_arr[:, 0], interp_arr[:, 1], "k-", alpha=0.35, linewidth=1.2)
+    ax1.set_title(f"Cam {cam_index}: interpolated (optimizer input)")
+    ax1.set_xlabel("u (pixels)", fontsize=14)
+    ax1.set_ylabel("v (pixels)", fontsize=14)
+    fig.colorbar(sc1, ax=ax1, shrink=0.75, label="Frame index")
+
+    for ax in (ax0, ax1):
+        ax.axvline(x=w_orig, color="r", linestyle="--", alpha=0.5)
+        ax.axhline(y=h_orig, color="r", linestyle="--", alpha=0.5)
+        ax.axvline(x=0, color="r", linestyle="--", alpha=0.5)
+        ax.axhline(y=0, color="r", linestyle="--", alpha=0.5)
+        ax.set_xlim(0, w_orig)
+        ax.set_ylim(0, h_orig)
+        ax.invert_yaxis()
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=120)
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
 
 def plot_2d_pixels(pixels, dimensions, out_path="trajectory_2d.png"):
     try:
@@ -353,15 +470,15 @@ def main():
 
     start_time = time.perf_counter()
     video_paths = [
-        "Video_Camera_Processing/throws/throw0.mp4",
-        "Video_Camera_Processing/throws/throw1.mp4",
+        "Video_Camera_Processing/throws/another_throw1.mp4",
+        "Video_Camera_Processing/throws/another_throw0.mp4",
     ]
     P_list_path = "Video_Camera_Processing/P_list.npy"
     dt = 1.0 / 19.0
     g = [0.0, 0.0, -9.81]
     pixel_sigma = 1.0
     physics_sigma = 0.1
-    omega_phys = 0.0 #10000.0
+    omega_phys = 10000.0 #10000.0
     max_frames = None
     out_path = "trajectory_3d.png"
     side_by_side_dir = _PROJECT_ROOT / "sample_data" / "trajectory_side_by_side"
@@ -378,7 +495,7 @@ def main():
     orig_sizes = [read_video_frame_size(p) for p in video_paths]
     print(f"orig_sizes (width, height) from videos: {orig_sizes}")
 
-    X_opt, cov, frame_indices, pixels, frame_indices_all, pixels_all_frames, detected_all_frames, pixels_for_camera = run_pipeline(
+    (X_opt, cov, frame_indices, pixels_for_draw, frame_indices_all, positions_all_frames, detected_all_frames, pixels_for_camera, t_lo, t_hi,) = run_pipeline(
         [str(p) for p in video_paths],
         P_list=P_list,
         dt=dt,
@@ -410,13 +527,23 @@ def main():
 
     plot_3d_trajectory(X_opt, cov=cov, out_path=out_path)
 
-    for i in range(len(pixels)):
-        plot_2d_pixels(pixels_for_camera[i], dimensions=orig_sizes[i], out_path=f"trajectory_2d_{i}.png")
+    for i in range(len(pixels_for_camera)):
+        plot_2d_raw_vs_interpolated(
+            pixels_for_camera[i],
+            positions_all_frames[i],
+            t_lo,
+            t_hi,
+            orig_sizes[i],
+            _PROJECT_ROOT / f"trajectory_2d_compare_{i}.png",
+            cam_index=i,
+        )
+        plot_2d_pixels(
+            pixels_for_camera[i],
+            dimensions=orig_sizes[i],
+            out_path=str(_PROJECT_ROOT / f"trajectory_2d_{i}.png"),
+        )
 
-    
-
-    save_frames(video_paths, frame_indices_all, side_by_side_dir, pixels=pixels_all_frames, detected=detected_all_frames)
-
+    save_frames(video_paths, frame_indices_all, side_by_side_dir, pixels=positions_all_frames, detected=detected_all_frames)
 
 if __name__ == "__main__":
     main()

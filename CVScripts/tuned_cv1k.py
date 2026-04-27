@@ -21,6 +21,7 @@ import argparse
 from collections import deque
 from dataclasses import dataclass, field
 import time
+from pathlib import Path
 from typing import Optional, Tuple, List
 
 DISPLAY_WIDTH  = 1920
@@ -30,7 +31,7 @@ PROCESS_HEIGHT = 540#3000 # 540
 
 # Background subtractor
 MOG2_HISTORY        = 300   # frames to build background model
-MOG2_VAR_THRESHOLD  = 60    # lower = more sensitive; raise if noisy background
+MOG2_VAR_THRESHOLD  = 70    # lower = more sensitive; raise if noisy background
 MOG2_DETECT_SHADOWS = False
 
 MORPH_OPEN_KERNEL  = 3   # removes small noise blobs
@@ -783,27 +784,21 @@ def extract_trajectory_from_video(video_path: str, max_frames: Optional[int] = N
             cx, cy, _radius, _circ = best
             tracker.correct(cx, cy)
             tracker.missed = 0
-            positions.append(np.array([float(cx), float(cy)], dtype=np.float64))
+            pt = np.array([float(cx), float(cy)], dtype=np.float64)
+            positions.append(pt)
             detected.append(True)
         else:
             tracker.missed += 1
             if tracker.missed > MAX_MISSED_FRAMES:
                 tracker.reset()
-            if tracker.predicted is not None:
-                # This is exactly what gets drawn in the red line (predicted positions)
-                positions.append(
-                    np.array([float(tracker.predicted[0]), float(tracker.predicted[1])], dtype=np.float64)
-                )
-                detected.append(False)
-            else:
-                positions.append(None)
-                detected.append(False)
+            positions.append(None)
+            detected.append(False)
 
     cap.release()
-    
-    # The trail (red line) consists of all non-None positions in order
-    trail = [pos for pos in positions if pos is not None]
-    
+
+    trail = [
+        np.array([float(p[0]), float(p[1])], dtype=np.float64) for p in tracker.trail
+    ]
     return positions, detected, fps, (PROCESS_WIDTH, PROCESS_HEIGHT), trail
 
 
@@ -824,24 +819,10 @@ def plot_trajectory_like_visualization(video_path, output_path="trajectory_plot.
     # Create figure with two subplots
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
     
-    # Plot 1: Trajectory in image coordinates (like the red line)
+    # Plot 1: Trajectory in image coordinates (same polyline as draw_trail / deque trail)
     ax1.plot(trail_array[:, 0], trail_array[:, 1], 'y-', linewidth=3.0, alpha=0.9, label='Trajectory (neon yellow)')
-    
-    # Color code detection vs prediction
-    detection_colors = []
-    frame_idx = 0
-    for i, pos in enumerate(positions):
-        if pos is not None:
-            if detected[i]:
-                detection_colors.append(('green', frame_idx, 'Detected'))
-            else:
-                detection_colors.append(('orange', frame_idx, 'Predicted'))
-            frame_idx += 1
-    
-    # Plot points with colors
-    for color, idx, label in detection_colors:
-        ax1.scatter(trail_array[idx, 0], trail_array[idx, 1], 
-                   c=color, s=30, alpha=0.6, edgecolors='black', linewidth=0.5)
+    ax1.scatter(trail_array[:, 0], trail_array[:, 1],
+                   c='green', s=30, alpha=0.6, edgecolors='black', linewidth=0.5, label='Detections (trail)',)
     
     # Mark start and end
     ax1.scatter(trail_array[0, 0], trail_array[0, 1], 
@@ -857,10 +838,12 @@ def plot_trajectory_like_visualization(video_path, output_path="trajectory_plot.
     ax1.legend()
     
     # Add text box with statistics
+    n_det_frames = int(sum(detected))
+    n_miss = len(positions) - n_det_frames
     stats_text = f'Total frames: {len(positions)}\n'
-    stats_text += f'Valid positions: {len(trail)}\n'
-    stats_text += f'Detected: {sum(detected)}\n'
-    stats_text += f'Predicted: {len([d for d in detected if d is False])}\n'
+    stats_text += f'Trail points (deque, max {TRAIL_LENGTH}): {len(trail)}\n'
+    stats_text += f'Frames with detection: {n_det_frames}\n'
+    stats_text += f'Frames with no detection: {n_miss}\n'
     stats_text += f'FPS: {fps:.1f}\n'
     stats_text += f'X range: {trail_array[:, 0].min():.1f} - {trail_array[:, 0].max():.1f}\n'
     stats_text += f'Y range: {trail_array[:, 1].min():.1f} - {trail_array[:, 1].max():.1f}'
@@ -885,9 +868,9 @@ def plot_trajectory_like_visualization(video_path, output_path="trajectory_plot.
     
     print(f"\n=== Trajectory Statistics ===")
     print(f"Total frames processed: {len(positions)}")
-    print(f"Frames with position (red line points): {len(trail)}")
-    print(f"  - Detected positions (green): {sum(detected)}")
-    print(f"  - Predicted positions (orange): {len([d for d in detected if d is False])}")
+    print(f"Trail deque points (on-screen polyline): {len(trail)} (max {TRAIL_LENGTH})")
+    print(f"  - Frames with detection: {sum(detected)}")
+    print(f"  - Frames with no detection: {len(positions) - sum(detected)}")
     print(f"Trajectory length: {len(trail)} points")
     print(f"Plot saved to: {output_path}")
     
