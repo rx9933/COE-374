@@ -470,8 +470,8 @@ def main():
 
     start_time = time.perf_counter()
     video_paths = [
-        "Video_Camera_Processing/throws/another_throw1.mp4",
-        "Video_Camera_Processing/throws/another_throw0.mp4",
+        "Video_Camera_Processing/throws/third_throw1.mp4",
+        "Video_Camera_Processing/throws/third_throw0.mp4",
     ]
     P_list_path = "Video_Camera_Processing/P_list.npy"
     dt = 1.0 / 19.0

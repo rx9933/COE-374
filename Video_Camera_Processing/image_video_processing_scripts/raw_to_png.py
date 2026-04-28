@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 #INPUT_FOLDER = "Video_Camera_Processing/throws/throw0"
-INPUT_FOLDER = "Video_Camera_Processing/throws/third_throw0"
+INPUT_FOLDER = "Video_Camera_Processing/throws/third_throw1"
 OUTPUT_FOLDER = None
 WIDTH = 3840
 HEIGHT = 2160

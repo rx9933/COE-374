@@ -33,5 +33,5 @@ def organize_by_extension(directory):
     print("Files organized successfully")
 
 if __name__ == "__main__":
-    path = "Video_Camera_Processing/throws/third_throw0"
+    path = "Video_Camera_Processing/throws/third_throw1"
     organize_by_extension(path)

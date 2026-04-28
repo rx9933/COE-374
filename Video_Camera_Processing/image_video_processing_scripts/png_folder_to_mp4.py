@@ -9,13 +9,13 @@ import tempfile
 from typing import Optional
 
 camera_num = 0
-first_frame = 405
-last_frame = 442
+first_frame = 403
+last_frame = 443
 #person = "Yash"
 #FRAMES_FOLDER = f"Video_Camera_Processing/throws/{person}_throw_{camera_num}/png"
 #OUTPUT_MP4 = f"Video_Camera_Processing/throws/{person}_throw_{camera_num}/mp4/{person}_throw_{camera_num}.mp4"
-FRAMES_FOLDER = "Video_Camera_Processing/throws/third_throw0/png"
-OUTPUT_MP4 = "Video_Camera_Processing/throws/third_throw0/third_throw0.mp4"
+FRAMES_FOLDER = "Video_Camera_Processing/throws/third_throw1/png"
+OUTPUT_MP4 = "Video_Camera_Processing/throws/third_throw1/third_throw1.mp4"
 FPS = 19.0 #CHANGE AS NEEDED
 PATTERN = "*.png"
 CRF = 23
